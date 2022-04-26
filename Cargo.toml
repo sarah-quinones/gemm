@@ -1,0 +1,23 @@
+[package]
+name = "gemm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy_static = "1.4.0"
+rayon = "1.5.2"
+raw-cpuid = "10.3.0"
+unroll-fn = "0.1.1"
+seq-macro = "0.3.0"
+packed_simd_2 = "0.3.7"
+dyn-stack = "0.1.1"
+strength_reduce = "0.2.3"
+
+[dev-dependencies]
+criterion = "0.3"
+rand = "0.8.5"
+assert_approx_eq = "1.1.0"
+
+[[bench]]
+name = "gemm"
+harness = false
