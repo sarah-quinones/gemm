@@ -3,24 +3,49 @@ use crate::{
     microkernel,
     pack_operands::{pack_lhs, pack_rhs},
 };
-use dyn_stack::{DynStack, ReborrowMut, StackReq};
+use dyn_stack::{DynStack, ReborrowMut, SizeOverflow, StackReq};
 
 type T = f64;
 const N: usize = 4;
 const MR: usize = 3 * N;
 const NR: usize = 4;
 
-pub fn gemm_req(max_m: usize, max_n: usize, max_k: usize, n_threads: usize) -> StackReq {
+pub fn gemm_req(
+    max_m: usize,
+    max_n: usize,
+    max_k: usize,
+    n_threads: usize,
+) -> Result<StackReq, SizeOverflow> {
     let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
     while max_k < kc / 2 {
         kc /= 2;
         mc *= 2;
     }
 
+    let packed_rhs_stride = kc * NR;
+    let packed_lhs_stride = kc * MR;
+
     let simd_align = core::mem::size_of::<T>() * N;
 
-    StackReq::new_aligned::<T>(kc * nc, simd_align)
-        .and(StackReq::new_aligned::<T>(n_threads * kc * mc, simd_align))
+    StackReq::try_new_aligned::<T>(
+        packed_rhs_stride * (nc / NR).min(div_ceil(max_n, NR)),
+        simd_align,
+    )?
+    .try_and(StackReq::new_aligned::<T>(
+        n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(max_m, MR)),
+        simd_align,
+    ))
+}
+
+#[inline(always)]
+fn div_ceil(a: usize, b: usize) -> usize {
+    let div = a / b;
+    let rem = a % b;
+    if rem == 0 {
+        div
+    } else {
+        div + 1
+    }
 }
 
 #[inline(never)]
@@ -53,14 +78,15 @@ pub unsafe fn gemm_basic(
         mc *= 2;
     }
 
-    let packed_lhs_stride = kc * MR;
     let packed_rhs_stride = kc * NR;
+    let packed_lhs_stride = kc * MR;
 
     let simd_align = core::mem::size_of::<T>() * N;
 
-    let (mut packed_rhs_storage, mut stack) = stack
-        .rb_mut()
-        .make_aligned_uninit::<T>(packed_rhs_stride * nc / NR, simd_align);
+    let (mut packed_rhs_storage, mut stack) = stack.rb_mut().make_aligned_uninit::<T>(
+        packed_rhs_stride * (nc / NR).min(div_ceil(n, NR)),
+        simd_align,
+    );
 
     let packed_rhs = packed_rhs_storage.as_mut_ptr() as *mut T;
 
@@ -90,9 +116,10 @@ pub unsafe fn gemm_basic(
                 packed_rhs_stride,
             );
 
-            let (mut packed_lhs_storage, _) = stack
-                .rb_mut()
-                .make_aligned_uninit::<T>(n_threads * packed_lhs_stride * mc / MR, simd_align);
+            let (mut packed_lhs_storage, _) = stack.rb_mut().make_aligned_uninit::<T>(
+                n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)),
+                simd_align,
+            );
 
             let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
             let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;

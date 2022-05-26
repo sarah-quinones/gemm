@@ -19,6 +19,7 @@ dyn-stack = "0.3"
 [dev-dependencies]
 criterion = "0.3"
 rand = "0.8.5"
+nalgebra = "0.31.0"
 assert_approx_eq = "1.1.0"
 
 [[bench]]

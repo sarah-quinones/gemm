@@ -49,7 +49,7 @@ mod tests {
             let mut c_vec = vec![0.0; m * n];
             let mut d_vec = vec![0.0; m * n];
 
-            let mut mem = uninit_mem_in_global(gemm::gemm_req(m, n, k, n_threads));
+            let mut mem = uninit_mem_in_global(gemm::gemm_req(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
             unsafe {
                 gemm::gemm_basic(
