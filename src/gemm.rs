@@ -6,21 +6,21 @@ use crate::{
 use dyn_stack::{DynStack, ReborrowMut, StackReq};
 
 type T = f64;
-const N: usize = 8;
+const N: usize = 4;
 const MR: usize = 3 * N;
 const NR: usize = 4;
 
-pub fn gemm_req(n_threads: usize) -> StackReq {
-    let n_threads = n_threads.min(64);
+pub fn gemm_req(max_m: usize, max_n: usize, max_k: usize, n_threads: usize) -> StackReq {
+    let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
+    while max_k < kc / 2 {
+        kc /= 2;
+        mc *= 2;
+    }
 
-    let KernelParams { kc, mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
-    let packed_lhs_stride = kc * MR;
-    let packed_rhs_stride = kc * NR;
     let simd_align = core::mem::size_of::<T>() * N;
 
-    StackReq::new_aligned::<T>(packed_rhs_stride * nc / NR, simd_align).and(
-        StackReq::new_aligned::<T>(n_threads * packed_lhs_stride * (mc / MR), simd_align),
-    )
+    StackReq::new_aligned::<T>(kc * nc, simd_align)
+        .and(StackReq::new_aligned::<T>(n_threads * kc * mc, simd_align))
 }
 
 #[inline(never)]
@@ -47,10 +47,15 @@ pub unsafe fn gemm_basic(
         return;
     }
 
-    let KernelParams { kc, mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
+    let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
+    while k < kc / 2 {
+        kc /= 2;
+        mc *= 2;
+    }
 
     let packed_lhs_stride = kc * MR;
     let packed_rhs_stride = kc * NR;
+
     let simd_align = core::mem::size_of::<T>() * N;
 
     let (mut packed_rhs_storage, mut stack) = stack
@@ -84,8 +89,6 @@ pub unsafe fn gemm_basic(
                 rhs_rs,
                 packed_rhs_stride,
             );
-
-            use rayon::prelude::*;
 
             let (mut packed_lhs_storage, _) = stack
                 .rb_mut()
@@ -167,8 +170,8 @@ pub unsafe fn gemm_basic(
                         );
 
                         macro_rules! ukr {
-                            ($mr: expr, $nr: expr, $mul: expr, $k_unroll: expr) => {
-                                microkernel::x512bit::f64::ukr::<$mr, $nr, $mul, $k_unroll>(
+                            ($fn: expr) => {
+                                $fn(
                                     m_chunk_inner,
                                     n_chunk_inner,
                                     k_chunk,
@@ -186,21 +189,22 @@ pub unsafe fn gemm_basic(
                             };
                         }
 
+                        use microkernel::x256bit::f64::*;
                         match ((m_chunk_inner + (N - 1)) / N, n_chunk_inner) {
-                            (1, 1) => ukr!(1, 1, 4, 4),
-                            (1, 2) => ukr!(1, 2, 4, 4),
-                            (1, 3) => ukr!(1, 3, 4, 4),
-                            (1, 4) => ukr!(1, 4, 2, 4),
+                            (1, 1) => ukr!(x1x1),
+                            (1, 2) => ukr!(x1x2),
+                            (1, 3) => ukr!(x1x3),
+                            (1, 4) => ukr!(x1x4),
 
-                            (2, 1) => ukr!(2, 1, 4, 4),
-                            (2, 2) => ukr!(2, 2, 2, 4),
-                            (2, 3) => ukr!(2, 3, 2, 4),
-                            (2, 4) => ukr!(2, 4, 2, 4),
+                            (2, 1) => ukr!(x2x1),
+                            (2, 2) => ukr!(x2x2),
+                            (2, 3) => ukr!(x2x3),
+                            (2, 4) => ukr!(x2x4),
 
-                            (3, 1) => ukr!(3, 1, 4, 4),
-                            (3, 2) => ukr!(3, 2, 2, 4),
-                            (3, 3) => ukr!(3, 3, 2, 4),
-                            (3, 4) => ukr!(3, 4, 1, 4),
+                            (3, 1) => ukr!(x3x1),
+                            (3, 2) => ukr!(x3x2),
+                            (3, 3) => ukr!(x3x3),
+                            (3, 4) => ukr!(x3x4),
 
                             _ => unreachable!(),
                         }
@@ -210,9 +214,10 @@ pub unsafe fn gemm_basic(
                 }
             };
 
-            if n_threads == 1 {
+            if n_threads <= 1 {
                 func(0);
             } else {
+                use rayon::prelude::*;
                 (0..n_threads).into_par_iter().for_each(func);
             }
             depth_outer += k_chunk;

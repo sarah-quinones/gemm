@@ -167,7 +167,8 @@ pub fn kernel_params(mr: usize, nr: usize, sizeof: usize) -> KernelParams {
         let c_lhs = (mr * sizeof) / gcd;
         let c_rhs = (nr * kc_0 * sizeof) / (l1_line_bytes * l1_n_sets);
         let kc_multiplier = (l1_assoc - 1) / (c_lhs + c_rhs);
-        let auto_kc = kc_0 * kc_multiplier;
+        // let auto_kc = kc_0 * kc_multiplier;
+        let auto_kc = kc_0 * kc_multiplier.next_power_of_two();
 
         // l2 cache must hold
         //  - B micropanel: nr×kc

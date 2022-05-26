@@ -1,13 +1,9 @@
-#![feature(min_specialization)]
-
 mod cache;
 pub mod gemm;
 mod microkernel;
 mod pack_operands;
 
 pub(crate) struct Ptr<T>(*mut T);
-
-impl<T> Ptr<T> {}
 
 impl<T> Clone for Ptr<T> {
     fn clone(&self) -> Self {
@@ -36,7 +32,7 @@ mod tests {
 
     #[test]
     fn test_gemm() {
-        use dyn_stack::{uninit_mem, DynStack, ReborrowMut};
+        use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
 
         let mut mnks = vec![];
         mnks.push((1, 1, 2));
@@ -47,14 +43,14 @@ mod tests {
 
         let n_threads = rayon::current_num_threads();
 
-        let mut mem = uninit_mem(gemm::gemm_req(n_threads));
-        let mut stack = DynStack::new(&mut mem);
-
         for (m, n, k) in mnks {
             let a_vec: Vec<_> = (0..(m * k)).map(|_| rand::random()).collect();
             let b_vec: Vec<_> = (0..(k * n)).map(|_| rand::random()).collect();
             let mut c_vec = vec![0.0; m * n];
             let mut d_vec = vec![0.0; m * n];
+
+            let mut mem = uninit_mem_in_global(gemm::gemm_req(m, n, k, n_threads));
+            let mut stack = DynStack::new(&mut mem);
             unsafe {
                 gemm::gemm_basic(
                     m,
