@@ -134,7 +134,8 @@ pub unsafe fn gemm_basic(
             }
 
             let func = move |tid| {
-                let packed_lhs = packed_lhs.wrapping_add(tid * packed_lhs_stride * (mc / MR));
+                let packed_lhs = packed_lhs
+                    .wrapping_add(tid * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)));
 
                 let min_jobs_per_thread = n_jobs / n_threads;
                 let rem = n_jobs % n_threads;
