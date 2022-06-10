@@ -14,7 +14,7 @@ pub fn gemm_req(
     max_m: usize,
     max_n: usize,
     max_k: usize,
-    n_threads: usize,
+    max_n_threads: usize,
 ) -> Result<StackReq, SizeOverflow> {
     let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
     while max_k < kc / 2 {
@@ -31,10 +31,10 @@ pub fn gemm_req(
         packed_rhs_stride * (nc / NR).min(div_ceil(max_n, NR)),
         simd_align,
     )?
-    .try_and(StackReq::new_aligned::<T>(
-        n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(max_m, MR)),
+    .try_and(StackReq::try_new_aligned::<T>(
+        max_n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(max_m, MR)),
         simd_align,
-    ))
+    )?)
 }
 
 #[inline(always)]
