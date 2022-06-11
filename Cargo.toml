@@ -15,6 +15,7 @@ rayon = "1.5"
 raw-cpuid = "10.3"
 seq-macro = "0.3"
 dyn-stack = "0.3"
+num-traits = "0.2"
 
 [dev-dependencies]
 criterion = "0.3"

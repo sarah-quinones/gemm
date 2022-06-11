@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
-use gemm::gemm::{gemm_basic, gemm_req};
+use gemm::gemm::f64::{gemm_basic, gemm_req};
 use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {

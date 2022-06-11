@@ -2,40 +2,10 @@ use crate::{
     cache::{kernel_params, KernelParams},
     microkernel,
     pack_operands::{pack_lhs, pack_rhs},
+    Ptr,
 };
 use dyn_stack::{DynStack, ReborrowMut, SizeOverflow, StackReq};
-
-type T = f64;
-const N: usize = 4;
-const MR: usize = 3 * N;
-const NR: usize = 4;
-
-pub fn gemm_req(
-    max_m: usize,
-    max_n: usize,
-    max_k: usize,
-    max_n_threads: usize,
-) -> Result<StackReq, SizeOverflow> {
-    let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
-    while max_k < kc / 2 {
-        kc /= 2;
-        mc *= 2;
-    }
-
-    let packed_rhs_stride = kc * NR;
-    let packed_lhs_stride = kc * MR;
-
-    let simd_align = core::mem::size_of::<T>() * N;
-
-    StackReq::try_new_aligned::<T>(
-        packed_rhs_stride * (nc / NR).min(div_ceil(max_n, NR)),
-        simd_align,
-    )?
-    .try_and(StackReq::try_new_aligned::<T>(
-        max_n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(max_m, MR)),
-        simd_align,
-    )?)
-}
+use num_traits::Zero;
 
 #[inline(always)]
 fn div_ceil(a: usize, b: usize) -> usize {
@@ -49,7 +19,33 @@ fn div_ceil(a: usize, b: usize) -> usize {
 }
 
 #[inline(never)]
-pub unsafe fn gemm_basic(
+unsafe fn gemm_basic_generic<
+    T: Copy + From<u8> + Send + Sync,
+    F: Copy
+        + Send
+        + Sync
+        + Fn(
+            usize,
+            usize,
+        ) -> unsafe fn(
+            usize,
+            usize,
+            usize,
+            Ptr<T>,
+            Ptr<T>,
+            Ptr<T>,
+            isize,
+            isize,
+            isize,
+            isize,
+            T,
+            T,
+            bool,
+        ),
+    const N: usize,
+    const MR: usize,
+    const NR: usize,
+>(
     m: usize,
     n: usize,
     k: usize,
@@ -66,6 +62,7 @@ pub unsafe fn gemm_basic(
     alpha: T,
     beta: T,
     n_threads: usize,
+    dispatcher: F,
     mut stack: DynStack,
 ) {
     if m == 0 || n == 0 {
@@ -89,8 +86,6 @@ pub unsafe fn gemm_basic(
     );
 
     let packed_rhs = packed_rhs_storage.as_mut_ptr() as *mut T;
-
-    use crate::Ptr;
 
     let dst = Ptr(dst);
     let lhs = Ptr(lhs as *mut T);
@@ -197,45 +192,22 @@ pub unsafe fn gemm_basic(
                                 + (col_outer + col_inner) as isize * dst_cs,
                         );
 
-                        macro_rules! ukr {
-                            ($fn: expr) => {
-                                $fn(
-                                    m_chunk_inner,
-                                    n_chunk_inner,
-                                    k_chunk,
-                                    dst,
-                                    packed_lhs.wrapping_add(row_inner * kc),
-                                    packed_rhs.wrapping_add(col_inner * kc),
-                                    dst_cs,
-                                    dst_rs,
-                                    MR as isize,
-                                    NR as isize,
-                                    if depth_outer == 0 { alpha } else { 1.0 },
-                                    beta,
-                                    if depth_outer == 0 { read_dst } else { true },
-                                )
-                            };
-                        }
-
-                        use microkernel::x256bit::f64::*;
-                        match ((m_chunk_inner + (N - 1)) / N, n_chunk_inner) {
-                            (1, 1) => ukr!(x1x1),
-                            (1, 2) => ukr!(x1x2),
-                            (1, 3) => ukr!(x1x3),
-                            (1, 4) => ukr!(x1x4),
-
-                            (2, 1) => ukr!(x2x1),
-                            (2, 2) => ukr!(x2x2),
-                            (2, 3) => ukr!(x2x3),
-                            (2, 4) => ukr!(x2x4),
-
-                            (3, 1) => ukr!(x3x1),
-                            (3, 2) => ukr!(x3x2),
-                            (3, 3) => ukr!(x3x3),
-                            (3, 4) => ukr!(x3x4),
-
-                            _ => unreachable!(),
-                        }
+                        let func = dispatcher((m_chunk_inner + (N - 1)) / N, n_chunk_inner);
+                        func(
+                            m_chunk_inner,
+                            n_chunk_inner,
+                            k_chunk,
+                            dst,
+                            packed_lhs.wrapping_add(row_inner * kc),
+                            packed_rhs.wrapping_add(col_inner * kc),
+                            dst_cs,
+                            dst_rs,
+                            MR as isize,
+                            NR as isize,
+                            if depth_outer == 0 { alpha } else { 1_u8.into() },
+                            beta,
+                            if depth_outer == 0 { read_dst } else { true },
+                        );
                     }
 
                     row_outer += m_chunk;
@@ -254,8 +226,113 @@ pub unsafe fn gemm_basic(
     }
 }
 
+fn gemm_basic_req_generic<T>(
+    n: usize,
+    mr: usize,
+    nr: usize,
+    max_m: usize,
+    max_n: usize,
+    max_k: usize,
+    max_n_threads: usize,
+) -> Result<StackReq, SizeOverflow> {
+    let KernelParams { mut kc, mut mc, nc } = kernel_params(mr, nr, core::mem::size_of::<T>());
+    while max_k < kc / 2 {
+        kc /= 2;
+        mc *= 2;
+    }
+    let packed_rhs_stride = kc * nr;
+    let packed_lhs_stride = kc * mr;
+    mc *= 2;
+    let simd_align = core::mem::size_of::<T>() * n;
+
+    StackReq::try_new_aligned::<T>(
+        packed_rhs_stride * (nc / nr).min(div_ceil(max_n, nr)),
+        simd_align,
+    )?
+    .try_and(StackReq::try_new_aligned::<T>(
+        max_n_threads * packed_lhs_stride * (mc / mr).min(div_ceil(max_m, mr)),
+        simd_align,
+    )?)
+}
+
+pub mod f64 {
+    use super::*;
+    type T = f64;
+    const N: usize = 4;
+    const MR: usize = 3 * N;
+    const NR: usize = 4;
+
+    pub fn gemm_req(
+        max_m: usize,
+        max_n: usize,
+        max_k: usize,
+        max_n_threads: usize,
+    ) -> Result<StackReq, SizeOverflow> {
+        gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+    }
+
+    pub unsafe fn gemm_basic(
+        m: usize,
+        n: usize,
+        k: usize,
+        dst: *mut T,
+        dst_cs: isize,
+        dst_rs: isize,
+        read_dst: bool,
+        lhs: *const T,
+        lhs_cs: isize,
+        lhs_rs: isize,
+        rhs: *const T,
+        rhs_cs: isize,
+        rhs_rs: isize,
+        alpha: T,
+        beta: T,
+        n_threads: usize,
+        stack: DynStack,
+    ) {
+        use microkernel::x256bit::f64::*;
+        gemm_basic_generic::<T, _, N, MR, NR>(
+            m,
+            n,
+            k,
+            dst,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs,
+            lhs_cs,
+            lhs_rs,
+            rhs,
+            rhs_cs,
+            rhs_rs,
+            alpha,
+            beta,
+            n_threads,
+            |mr_div_n, nr| match (mr_div_n, nr) {
+                (1, 1) => x1x1,
+                (1, 2) => x1x2,
+                (1, 3) => x1x3,
+                (1, 4) => x1x4,
+
+                (2, 1) => x2x1,
+                (2, 2) => x2x2,
+                (2, 3) => x2x3,
+                (2, 4) => x2x4,
+
+                (3, 1) => x3x1,
+                (3, 2) => x3x2,
+                (3, 3) => x3x3,
+                (3, 4) => x3x4,
+
+                _ => unreachable!(),
+            },
+            stack,
+        );
+    }
+}
+
 #[inline(never)]
-pub unsafe fn gemm_correct(
+pub unsafe fn gemm_correct<T>(
     m: usize,
     n: usize,
     k: usize,
@@ -272,19 +349,24 @@ pub unsafe fn gemm_correct(
     alpha: T,
     beta: T,
     _stack: DynStack,
-) {
+) where
+    T: Zero,
+    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
+    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
+{
     for row in 0..m {
         for col in 0..n {
-            let mut accum = 0.0;
+            let mut accum = <T as Zero>::zero();
             for depth in 0..k {
-                accum += *lhs.offset(row as isize * lhs_rs + depth as isize * lhs_cs)
-                    * *rhs.offset(depth as isize * rhs_rs + col as isize * rhs_cs);
+                let lhs = &*lhs.offset(row as isize * lhs_rs + depth as isize * lhs_cs);
+                let rhs = &*rhs.offset(depth as isize * rhs_rs + col as isize * rhs_cs);
+                accum = &accum + &(lhs * rhs);
             }
-            accum *= beta;
+            accum = &accum * &beta;
 
             let dst = dst.offset(row as isize * dst_rs + col as isize * dst_cs);
             if read_dst {
-                accum += alpha * *dst;
+                accum = &accum + &(&alpha * &*dst);
             }
             *dst = accum
         }
