@@ -255,80 +255,305 @@ fn gemm_basic_req_generic<T>(
     )?)
 }
 
+macro_rules! gemm_def {
+    ($ty: tt, $multiplier: expr) => {
+        use super::*;
+        type T = $ty;
+
+        lazy_static::lazy_static! {
+            static ref GEMM: (
+                unsafe fn(
+                    usize,
+                    usize,
+                    usize,
+                    *mut T,
+                    isize,
+                    isize,
+                    bool,
+                    *const T,
+                    isize,
+                    isize,
+                    *const T,
+                    isize,
+                    isize,
+                    T,
+                    T,
+                    usize,
+                    DynStack,
+                    ),
+                fn(
+                    usize,
+                    usize,
+                    usize,
+                    usize,
+                    ) -> Result<StackReq, SizeOverflow>,
+                ) = {
+                if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+                    (avx2::gemm_basic, avx2::gemm_req)
+                } else if is_x86_feature_detected!("avx") {
+                    (avx::gemm_basic, avx::gemm_req)
+                } else {
+                    (sse::gemm_basic, sse::gemm_req)
+                }
+            };
+        }
+
+        pub fn gemm_req(
+            max_m: usize,
+            max_n: usize,
+            max_k: usize,
+            max_n_threads: usize,
+        ) -> Result<StackReq, SizeOverflow> {
+            (GEMM.1)(max_m, max_n, max_k, max_n_threads)
+        }
+
+        pub unsafe fn gemm_basic(
+            m: usize,
+            n: usize,
+            k: usize,
+            dst: *mut T,
+            dst_cs: isize,
+            dst_rs: isize,
+            read_dst: bool,
+            lhs: *const T,
+            lhs_cs: isize,
+            lhs_rs: isize,
+            rhs: *const T,
+            rhs_cs: isize,
+            rhs_rs: isize,
+            alpha: T,
+            beta: T,
+            n_threads: usize,
+            stack: DynStack,
+        ) {
+            (GEMM.0)(
+                m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta, n_threads, stack,
+            )
+        }
+
+        mod sse {
+            use super::*;
+            const N: usize = 2 * $multiplier;
+            const MR: usize = 2 * N;
+            const NR: usize = 4;
+
+            pub fn gemm_req(
+                max_m: usize,
+                max_n: usize,
+                max_k: usize,
+                max_n_threads: usize,
+            ) -> Result<StackReq, SizeOverflow> {
+                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+            }
+
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                n_threads: usize,
+                stack: DynStack,
+            ) {
+                use microkernel::sse::$ty::*;
+                gemm_basic_generic::<T, _, N, MR, NR>(
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    n_threads,
+                    |mr_div_n, nr| match (mr_div_n, nr) {
+                        (1, 1) => x1x1,
+                        (1, 2) => x1x2,
+                        (1, 3) => x1x3,
+                        (1, 4) => x1x4,
+
+                        (2, 1) => x2x1,
+                        (2, 2) => x2x2,
+                        (2, 3) => x2x3,
+                        (2, 4) => x2x4,
+
+                        _ => unreachable!(),
+                    },
+                    stack,
+                );
+            }
+        }
+
+        mod avx {
+            use super::*;
+            const N: usize = 4 * $multiplier;
+            const MR: usize = 2 * N;
+            const NR: usize = 4;
+
+            pub fn gemm_req(
+                max_m: usize,
+                max_n: usize,
+                max_k: usize,
+                max_n_threads: usize,
+            ) -> Result<StackReq, SizeOverflow> {
+                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+            }
+
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                n_threads: usize,
+                stack: DynStack,
+            ) {
+                use microkernel::avx::$ty::*;
+                gemm_basic_generic::<T, _, N, MR, NR>(
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    n_threads,
+                    |mr_div_n, nr| match (mr_div_n, nr) {
+                        (1, 1) => x1x1,
+                        (1, 2) => x1x2,
+                        (1, 3) => x1x3,
+                        (1, 4) => x1x4,
+
+                        (2, 1) => x2x1,
+                        (2, 2) => x2x2,
+                        (2, 3) => x2x3,
+                        (2, 4) => x2x4,
+
+                        _ => unreachable!(),
+                    },
+                    stack,
+                );
+            }
+        }
+
+        mod avx2 {
+            use super::*;
+            const N: usize = 4 * $multiplier;
+            const MR: usize = 3 * N;
+            const NR: usize = 4;
+
+            pub fn gemm_req(
+                max_m: usize,
+                max_n: usize,
+                max_k: usize,
+                max_n_threads: usize,
+            ) -> Result<StackReq, SizeOverflow> {
+                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+            }
+
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                n_threads: usize,
+                stack: DynStack,
+            ) {
+                use microkernel::avx2::$ty::*;
+                gemm_basic_generic::<T, _, N, MR, NR>(
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    n_threads,
+                    |mr_div_n, nr| match (mr_div_n, nr) {
+                        (1, 1) => x1x1,
+                        (1, 2) => x1x2,
+                        (1, 3) => x1x3,
+                        (1, 4) => x1x4,
+
+                        (2, 1) => x2x1,
+                        (2, 2) => x2x2,
+                        (2, 3) => x2x3,
+                        (2, 4) => x2x4,
+
+                        (3, 1) => x3x1,
+                        (3, 2) => x3x2,
+                        (3, 3) => x3x3,
+                        (3, 4) => x3x4,
+
+                        _ => unreachable!(),
+                    },
+                    stack,
+                );
+            }
+        }
+    };
+}
+
+pub mod f32 {
+    gemm_def!(f32, 2);
+}
 pub mod f64 {
-    use super::*;
-    type T = f64;
-    const N: usize = 4;
-    const MR: usize = 3 * N;
-    const NR: usize = 4;
-
-    pub fn gemm_req(
-        max_m: usize,
-        max_n: usize,
-        max_k: usize,
-        max_n_threads: usize,
-    ) -> Result<StackReq, SizeOverflow> {
-        gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
-    }
-
-    pub unsafe fn gemm_basic(
-        m: usize,
-        n: usize,
-        k: usize,
-        dst: *mut T,
-        dst_cs: isize,
-        dst_rs: isize,
-        read_dst: bool,
-        lhs: *const T,
-        lhs_cs: isize,
-        lhs_rs: isize,
-        rhs: *const T,
-        rhs_cs: isize,
-        rhs_rs: isize,
-        alpha: T,
-        beta: T,
-        n_threads: usize,
-        stack: DynStack,
-    ) {
-        use microkernel::x256bit::f64::*;
-        gemm_basic_generic::<T, _, N, MR, NR>(
-            m,
-            n,
-            k,
-            dst,
-            dst_cs,
-            dst_rs,
-            read_dst,
-            lhs,
-            lhs_cs,
-            lhs_rs,
-            rhs,
-            rhs_cs,
-            rhs_rs,
-            alpha,
-            beta,
-            n_threads,
-            |mr_div_n, nr| match (mr_div_n, nr) {
-                (1, 1) => x1x1,
-                (1, 2) => x1x2,
-                (1, 3) => x1x3,
-                (1, 4) => x1x4,
-
-                (2, 1) => x2x1,
-                (2, 2) => x2x2,
-                (2, 3) => x2x3,
-                (2, 4) => x2x4,
-
-                (3, 1) => x3x1,
-                (3, 2) => x3x2,
-                (3, 3) => x3x3,
-                (3, 4) => x3x4,
-
-                _ => unreachable!(),
-            },
-            stack,
-        );
-    }
+    gemm_def!(f64, 1);
 }
 
 #[inline(never)]
