@@ -18,7 +18,6 @@ fn div_ceil(a: usize, b: usize) -> usize {
     }
 }
 
-#[inline(never)]
 unsafe fn gemm_basic_generic<
     T: Copy + From<u8> + Send + Sync,
     F: Copy
