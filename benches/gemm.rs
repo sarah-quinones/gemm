@@ -1,11 +1,13 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
-use gemm::gemm::{gemm_basic, gemm_req};
+use gemm::gemm::{gemm, gemm_req};
 use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
     mnks.push((256, 256, 256));
+    mnks.push((256, 512, 256));
+    mnks.push((512, 256, 256));
     mnks.push((1024, 1024, 1024));
 
     for (m, n, k) in mnks {
@@ -20,7 +22,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let mut stack = DynStack::new(&mut mem);
             c.bench_function(&format!("lib-{}×{}×{}", m, n, k), |b| {
                 b.iter(|| unsafe {
-                    gemm_basic(
+                    gemm(
                         m,
                         n,
                         k,

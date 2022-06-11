@@ -303,7 +303,8 @@ macro_rules! gemm_def {
             max_k: usize,
             max_n_threads: usize,
         ) -> Result<StackReq, SizeOverflow> {
-            (GEMM.1)(max_m, max_n, max_k, max_n_threads)
+            let max_outer = max_m.max(max_n);
+            (GEMM.1)(max_outer, max_outer, max_k, max_n_threads)
         }
 
         pub unsafe fn gemm_basic(
@@ -325,10 +326,17 @@ macro_rules! gemm_def {
             n_threads: usize,
             stack: DynStack,
         ) {
-            (GEMM.0)(
-                m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-                alpha, beta, n_threads, stack,
-            )
+            if m > n {
+                (GEMM.0)(
+                    n, m, k, dst, dst_rs, dst_cs, read_dst, rhs, rhs_rs, rhs_cs, lhs, lhs_rs,
+                    lhs_cs, alpha, beta, n_threads, stack,
+                )
+            } else {
+                (GEMM.0)(
+                    m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs,
+                    rhs_rs, alpha, beta, n_threads, stack,
+                )
+            }
         }
 
         mod sse {
@@ -574,8 +582,7 @@ pub fn gemm_req<T>(
     }
 }
 
-#[inline(never)]
-pub unsafe fn gemm_basic<T>(
+pub unsafe fn gemm<T>(
     m: usize,
     n: usize,
     k: usize,

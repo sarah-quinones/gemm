@@ -52,7 +52,7 @@ mod tests {
             let mut mem = uninit_mem_in_global(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
             unsafe {
-                gemm::gemm_basic(
+                gemm::gemm(
                     m,
                     n,
                     k,
