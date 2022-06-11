@@ -648,7 +648,7 @@ pub unsafe fn gemm_basic<T>(
 }
 
 #[inline(never)]
-pub unsafe fn gemm_correct<T>(
+pub(crate) unsafe fn gemm_correct<T>(
     m: usize,
     n: usize,
     k: usize,
