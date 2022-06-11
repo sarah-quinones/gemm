@@ -549,11 +549,102 @@ macro_rules! gemm_def {
     };
 }
 
-pub mod f32 {
+mod f32 {
     gemm_def!(f32, 2);
 }
-pub mod f64 {
+mod f64 {
     gemm_def!(f64, 1);
+}
+
+fn unique_id<T>() -> usize {
+    (unique_id::<T>) as usize
+}
+
+pub fn gemm_req<T>(
+    max_m: usize,
+    max_n: usize,
+    max_k: usize,
+    max_n_threads: usize,
+) -> Result<StackReq, SizeOverflow> {
+    if unique_id::<T>() == unique_id::<f64>() {
+        crate::gemm::f64::gemm_req(max_m, max_n, max_k, max_n_threads)
+    } else if unique_id::<T>() == unique_id::<f32>() {
+        crate::gemm::f32::gemm_req(max_m, max_n, max_k, max_n_threads)
+    } else {
+        Ok(StackReq::new::<()>(0))
+    }
+}
+
+#[inline(never)]
+pub unsafe fn gemm_basic<T>(
+    m: usize,
+    n: usize,
+    k: usize,
+    dst: *mut T,
+    dst_cs: isize,
+    dst_rs: isize,
+    read_dst: bool,
+    lhs: *const T,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
+    rhs_rs: isize,
+    alpha: T,
+    beta: T,
+    n_threads: usize,
+    stack: DynStack,
+) where
+    T: Zero + Send + Sync,
+    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
+    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
+{
+    if unique_id::<T>() == unique_id::<f64>() {
+        crate::gemm::f64::gemm_basic(
+            m,
+            n,
+            k,
+            dst as *mut f64,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs as *mut f64,
+            lhs_cs,
+            lhs_rs,
+            rhs as *mut f64,
+            rhs_cs,
+            rhs_rs,
+            *(&alpha as *const T as *const f64),
+            *(&beta as *const T as *const f64),
+            n_threads,
+            stack,
+        )
+    } else if unique_id::<T>() == unique_id::<f32>() {
+        crate::gemm::f32::gemm_basic(
+            m,
+            n,
+            k,
+            dst as *mut f32,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs as *mut f32,
+            lhs_cs,
+            lhs_rs,
+            rhs as *mut f32,
+            rhs_cs,
+            rhs_rs,
+            *(&alpha as *const T as *const f32),
+            *(&beta as *const T as *const f32),
+            n_threads,
+            stack,
+        )
+    } else {
+        gemm_correct(
+            m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+            alpha, beta, n_threads, stack,
+        )
+    }
 }
 
 #[inline(never)]
@@ -573,27 +664,49 @@ pub unsafe fn gemm_correct<T>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
-    _stack: DynStack,
+    n_threads: usize,
+    stack: DynStack,
 ) where
-    T: Zero,
+    T: Zero + Send + Sync,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
 {
-    for row in 0..m {
-        for col in 0..n {
-            let mut accum = <T as Zero>::zero();
-            for depth in 0..k {
-                let lhs = &*lhs.offset(row as isize * lhs_rs + depth as isize * lhs_cs);
-                let rhs = &*rhs.offset(depth as isize * rhs_rs + col as isize * rhs_cs);
-                accum = &accum + &(lhs * rhs);
-            }
-            accum = &accum * &beta;
+    let _stack = stack;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(n_threads)
+        .build()
+        .unwrap();
 
-            let dst = dst.offset(row as isize * dst_rs + col as isize * dst_cs);
-            if read_dst {
-                accum = &accum + &(&alpha * &*dst);
-            }
-            *dst = accum
-        }
-    }
+    let dst = Ptr(dst);
+    let lhs = Ptr(lhs as *mut T);
+    let rhs = Ptr(rhs as *mut T);
+
+    pool.install(|| {
+        use rayon::prelude::*;
+        (0..m).into_par_iter().for_each(|row| {
+            (0..n).into_par_iter().for_each(|col| {
+                let mut accum = <T as Zero>::zero();
+                for depth in 0..k {
+                    let lhs = &*lhs
+                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
+                        .0;
+
+                    let rhs = &*rhs
+                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
+                        .0;
+
+                    accum = &accum + &(lhs * rhs);
+                }
+                accum = &accum * &beta;
+
+                let dst = dst
+                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+                    .0;
+                if read_dst {
+                    accum = &accum + &(&alpha * &*dst);
+                }
+                *dst = accum
+            });
+        });
+    });
 }

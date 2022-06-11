@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
-use gemm::gemm::f64::{gemm_basic, gemm_req};
+use gemm::gemm::{gemm_basic, gemm_req};
 use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -16,7 +16,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
             let n_threads = rayon::current_num_threads();
 
-            let mut mem = uninit_mem_in_global(gemm_req(m, n, k, n_threads).unwrap());
+            let mut mem = uninit_mem_in_global(gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
             c.bench_function(&format!("lib-{}×{}×{}", m, n, k), |b| {
                 b.iter(|| unsafe {

@@ -44,15 +44,15 @@ mod tests {
         let n_threads = rayon::current_num_threads();
 
         for (m, n, k) in mnks {
-            let a_vec: Vec<_> = (0..(m * k)).map(|_| rand::random()).collect();
-            let b_vec: Vec<_> = (0..(k * n)).map(|_| rand::random()).collect();
+            let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
+            let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
             let mut c_vec = vec![0.0; m * n];
             let mut d_vec = vec![0.0; m * n];
 
-            let mut mem = uninit_mem_in_global(gemm::f64::gemm_req(m, n, k, n_threads).unwrap());
+            let mut mem = uninit_mem_in_global(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
             unsafe {
-                gemm::f64::gemm_basic(
+                gemm::gemm_basic(
                     m,
                     n,
                     k,
@@ -88,6 +88,7 @@ mod tests {
                     1,
                     0.0,
                     1.0,
+                    n_threads,
                     stack.rb_mut(),
                 );
             }
