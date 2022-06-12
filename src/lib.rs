@@ -1,7 +1,10 @@
 mod cache;
-pub mod gemm;
+mod gemm;
 mod microkernel;
 mod pack_operands;
+
+pub use gemm::gemm;
+pub use gemm::gemm_req;
 
 pub(crate) struct Ptr<T>(*mut T);
 
