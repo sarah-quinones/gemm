@@ -677,42 +677,37 @@ pub(crate) unsafe fn gemm_correct<T>(
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
 {
+    let _n_threads = n_threads;
     let _stack = stack;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(n_threads)
-        .build()
-        .unwrap();
 
     let dst = Ptr(dst);
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    pool.install(|| {
-        use rayon::prelude::*;
-        (0..m).into_par_iter().for_each(|row| {
-            (0..n).into_par_iter().for_each(|col| {
-                let mut accum = <T as Zero>::zero();
-                for depth in 0..k {
-                    let lhs = &*lhs
-                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
-                        .0;
-
-                    let rhs = &*rhs
-                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
-                        .0;
-
-                    accum = &accum + &(lhs * rhs);
-                }
-                accum = &accum * &beta;
-
-                let dst = dst
-                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+    use rayon::prelude::*;
+    (0..m).into_par_iter().for_each(|row| {
+        (0..n).into_par_iter().for_each(|col| {
+            let mut accum = <T as Zero>::zero();
+            for depth in 0..k {
+                let lhs = &*lhs
+                    .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
                     .0;
-                if read_dst {
-                    accum = &accum + &(&alpha * &*dst);
-                }
-                *dst = accum
-            });
+
+                let rhs = &*rhs
+                    .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
+                    .0;
+
+                accum = &accum + &(lhs * rhs);
+            }
+            accum = &accum * &beta;
+
+            let dst = dst
+                .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+                .0;
+            if read_dst {
+                accum = &accum + &(&alpha * &*dst);
+            }
+            *dst = accum
         });
     });
 }
