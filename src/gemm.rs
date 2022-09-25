@@ -4,8 +4,11 @@ use crate::{
     pack_operands::{pack_lhs, pack_rhs},
     Ptr,
 };
+use aligned_vec::CACHELINE_ALIGN;
+use core::any::TypeId;
 use dyn_stack::{DynStack, ReborrowMut, SizeOverflow, StackReq};
-use num_traits::Zero;
+use num_traits::{One, Zero};
+use strength_reduce::StrengthReducedUsize;
 
 #[inline(always)]
 fn div_ceil(a: usize, b: usize) -> usize {
@@ -18,29 +21,9 @@ fn div_ceil(a: usize, b: usize) -> usize {
     }
 }
 
+#[inline(always)]
 unsafe fn gemm_basic_generic<
-    T: Copy + From<u8> + Send + Sync,
-    F: Copy
-        + Send
-        + Sync
-        + Fn(
-            usize,
-            usize,
-        ) -> unsafe fn(
-            usize,
-            usize,
-            usize,
-            Ptr<T>,
-            Ptr<T>,
-            Ptr<T>,
-            isize,
-            isize,
-            isize,
-            isize,
-            T,
-            T,
-            bool,
-        ),
+    T: Copy + One + Send + Sync,
     const N: usize,
     const MR: usize,
     const NR: usize,
@@ -61,23 +44,42 @@ unsafe fn gemm_basic_generic<
     alpha: T,
     beta: T,
     n_threads: usize,
-    dispatcher: F,
-    mut stack: DynStack,
+    dispatcher: impl Copy
+        + Send
+        + Sync
+        + Fn(
+            usize,
+            usize,
+        ) -> unsafe fn(
+            usize,
+            usize,
+            usize,
+            Ptr<T>,
+            Ptr<T>,
+            Ptr<T>,
+            isize,
+            isize,
+            isize,
+            isize,
+            T,
+            T,
+            bool,
+        ),
+    mut stack: DynStack<'_>,
 ) {
     if m == 0 || n == 0 {
         return;
     }
 
-    let KernelParams { mut kc, mut mc, nc } = kernel_params(MR, NR, core::mem::size_of::<T>());
-    while k < kc / 2 {
-        kc /= 2;
-        mc *= 2;
-    }
+    let n_threads = StrengthReducedUsize::new(n_threads);
+
+    let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
+
+    let simd_align = CACHELINE_ALIGN;
+    let simd_stride = CACHELINE_ALIGN / core::mem::size_of::<T>();
 
     let packed_rhs_stride = kc * NR;
-    let packed_lhs_stride = kc * MR;
-
-    let simd_align = core::mem::size_of::<T>() * N;
+    let packed_lhs_stride = div_ceil(kc * MR, simd_stride) * simd_stride;
 
     let (mut packed_rhs_storage, mut stack) = stack.rb_mut().make_aligned_uninit::<T>(
         packed_rhs_stride * (nc / NR).min(div_ceil(n, NR)),
@@ -99,8 +101,7 @@ unsafe fn gemm_basic_generic<
         while depth_outer != k {
             let k_chunk = kc.min(k - depth_outer);
 
-            pack_rhs::<T>(
-                NR,
+            pack_rhs::<T, NR>(
                 n_chunk,
                 k_chunk,
                 packed_rhs,
@@ -111,7 +112,7 @@ unsafe fn gemm_basic_generic<
             );
 
             let (mut packed_lhs_storage, _) = stack.rb_mut().make_aligned_uninit::<T>(
-                n_threads * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)),
+                n_threads.get() * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)),
                 simd_align,
             );
 
@@ -132,7 +133,7 @@ unsafe fn gemm_basic_generic<
                     .wrapping_add(tid * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)));
 
                 let min_jobs_per_thread = n_jobs / n_threads;
-                let rem = n_jobs % n_threads;
+                let rem = n_jobs - n_threads.get() * min_jobs_per_thread;
 
                 // thread `tid` takes min_jobs_per_thread or min_jobs_per_thread + 1
                 let (job_start, job_end) = if tid < rem {
@@ -151,14 +152,17 @@ unsafe fn gemm_basic_generic<
                     let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
 
                     let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
-                    if job_id + n_mini_jobs < job_start || job_id >= job_end {
+
+                    if job_id >= job_end {
+                        return;
+                    }
+                    if job_id + n_mini_jobs < job_start {
                         row_outer += m_chunk;
                         job_id += n_mini_jobs;
                         continue;
                     }
 
-                    pack_lhs::<T>(
-                        MR,
+                    pack_lhs::<T, MR>(
                         m_chunk,
                         k_chunk,
                         packed_lhs,
@@ -170,54 +174,59 @@ unsafe fn gemm_basic_generic<
                         packed_lhs_stride,
                     );
 
-                    for ij in 0..n_col_mini_chunks * n_row_mini_chunks {
-                        let i = ij % n_row_mini_chunks;
-                        let j = ij / n_row_mini_chunks;
+                    let mut j = 0;
+                    while j < n_col_mini_chunks {
+                        let mut i = 0;
+                        while i < n_row_mini_chunks {
+                            let col_inner = NR * j;
+                            let n_chunk_inner = NR.min(n_chunk - col_inner);
 
-                        let col_inner = NR * j;
-                        let n_chunk_inner = NR.min(n_chunk - col_inner);
+                            let row_inner = MR * i;
+                            let m_chunk_inner = MR.min(m_chunk - row_inner);
 
-                        let row_inner = MR * i;
-                        let m_chunk_inner = MR.min(m_chunk - row_inner);
-
-                        if job_id < job_start || job_id >= job_end {
+                            if job_id < job_start || job_id >= job_end {
+                                job_id += 1;
+                                i += 1;
+                                continue;
+                            }
                             job_id += 1;
-                            continue;
+
+                            let dst = dst.wrapping_offset(
+                                (row_outer + row_inner) as isize * dst_rs
+                                    + (col_outer + col_inner) as isize * dst_cs,
+                            );
+
+                            let dispatcher = dispatcher;
+                            let func = dispatcher((m_chunk_inner + (N - 1)) / N, n_chunk_inner);
+                            func(
+                                m_chunk_inner,
+                                n_chunk_inner,
+                                k_chunk,
+                                dst,
+                                packed_lhs.wrapping_add(row_inner * kc),
+                                packed_rhs.wrapping_add(col_inner * kc),
+                                dst_cs,
+                                dst_rs,
+                                MR as isize,
+                                NR as isize,
+                                if depth_outer == 0 { alpha } else { T::one() },
+                                beta,
+                                if depth_outer == 0 { read_dst } else { true },
+                            );
+                            i += 1;
                         }
-                        job_id += 1;
-
-                        let dst = dst.wrapping_offset(
-                            (row_outer + row_inner) as isize * dst_rs
-                                + (col_outer + col_inner) as isize * dst_cs,
-                        );
-
-                        let func = dispatcher((m_chunk_inner + (N - 1)) / N, n_chunk_inner);
-                        func(
-                            m_chunk_inner,
-                            n_chunk_inner,
-                            k_chunk,
-                            dst,
-                            packed_lhs.wrapping_add(row_inner * kc),
-                            packed_rhs.wrapping_add(col_inner * kc),
-                            dst_cs,
-                            dst_rs,
-                            MR as isize,
-                            NR as isize,
-                            if depth_outer == 0 { alpha } else { 1_u8.into() },
-                            beta,
-                            if depth_outer == 0 { read_dst } else { true },
-                        );
+                        j += 1;
                     }
 
                     row_outer += m_chunk;
                 }
             };
 
-            if n_threads <= 1 {
+            if n_threads.get() <= 1 {
                 func(0);
             } else {
                 use rayon::prelude::*;
-                (0..n_threads).into_par_iter().for_each(func);
+                (0..n_threads.get()).into_par_iter().for_each(func);
             }
             depth_outer += k_chunk;
         }
@@ -226,7 +235,6 @@ unsafe fn gemm_basic_generic<
 }
 
 fn gemm_basic_req_generic<T>(
-    n: usize,
     mr: usize,
     nr: usize,
     max_m: usize,
@@ -234,15 +242,12 @@ fn gemm_basic_req_generic<T>(
     max_k: usize,
     max_n_threads: usize,
 ) -> Result<StackReq, SizeOverflow> {
-    let KernelParams { mut kc, mut mc, nc } = kernel_params(mr, nr, core::mem::size_of::<T>());
-    while max_k < kc / 2 {
-        kc /= 2;
-        mc *= 2;
-    }
+    let KernelParams { kc, mc, nc } =
+        kernel_params(max_m, max_n, max_k, mr, nr, core::mem::size_of::<T>());
+    let simd_align = CACHELINE_ALIGN;
+    let simd_stride = CACHELINE_ALIGN / core::mem::size_of::<T>();
     let packed_rhs_stride = kc * nr;
-    let packed_lhs_stride = kc * mr;
-    mc *= 2;
-    let simd_align = core::mem::size_of::<T>() * n;
+    let packed_lhs_stride = div_ceil(kc * mr, simd_stride) * simd_stride;
 
     StackReq::try_new_aligned::<T>(
         packed_rhs_stride * (nc / nr).min(div_ceil(max_n, nr)),
@@ -259,42 +264,54 @@ macro_rules! gemm_def {
         use super::*;
         type T = $ty;
 
+        type GemmTy = (
+            unsafe fn(
+                usize,
+                usize,
+                usize,
+                *mut T,
+                isize,
+                isize,
+                bool,
+                *const T,
+                isize,
+                isize,
+                *const T,
+                isize,
+                isize,
+                T,
+                T,
+                usize,
+                DynStack<'_>,
+            ),
+            fn(usize, usize, usize, usize) -> Result<StackReq, SizeOverflow>,
+        );
+
         lazy_static::lazy_static! {
-            static ref GEMM: (
-                unsafe fn(
-                    usize,
-                    usize,
-                    usize,
-                    *mut T,
-                    isize,
-                    isize,
-                    bool,
-                    *const T,
-                    isize,
-                    isize,
-                    *const T,
-                    isize,
-                    isize,
-                    T,
-                    T,
-                    usize,
-                    DynStack,
-                    ),
-                fn(
-                    usize,
-                    usize,
-                    usize,
-                    usize,
-                    ) -> Result<StackReq, SizeOverflow>,
-                ) = {
-                if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-                    (avx2::gemm_basic, avx2::gemm_req)
-                } else if is_x86_feature_detected!("avx") {
-                    (avx::gemm_basic, avx::gemm_req)
-                } else {
-                    (sse::gemm_basic, sse::gemm_req)
+            static ref GEMM: GemmTy = || -> GemmTy {
+
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                {
+                    #[cfg(feature = "nightly")]
+                    if is_x86_feature_detected!("avx512f") {
+                        return (avx512f::gemm_basic, avx512f::gemm_req);
+                    }
+                    if is_x86_feature_detected!("fma") {
+                        (fma::gemm_basic, fma::gemm_req)
+                    } else if is_x86_feature_detected!("avx") {
+                        (avx::gemm_basic, avx::gemm_req)
+                    } else if is_x86_feature_detected!("sse") {
+                        (sse::gemm_basic, sse::gemm_req)
+                    } else {
+                        (scalar::gemm_basic, scalar::gemm_req)
+                    }
                 }
-            };
+
+                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                {
+                    (scalar::gemm_basic, scalar::gemm_req)
+                }
+            }();
         }
 
         pub fn gemm_req(
@@ -324,7 +341,7 @@ macro_rules! gemm_def {
             alpha: T,
             beta: T,
             n_threads: usize,
-            stack: DynStack,
+            stack: DynStack<'_>,
         ) {
             if m > n {
                 (GEMM.0)(
@@ -339,6 +356,78 @@ macro_rules! gemm_def {
             }
         }
 
+        mod scalar {
+            use super::*;
+            const N: usize = 1;
+            const MR: usize = 2 * N;
+            const NR: usize = 4;
+
+            pub fn gemm_req(
+                max_m: usize,
+                max_n: usize,
+                max_k: usize,
+                max_n_threads: usize,
+            ) -> Result<StackReq, SizeOverflow> {
+                gemm_basic_req_generic::<T>(MR, NR, max_m, max_n, max_k, max_n_threads)
+            }
+
+            #[inline(never)]
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                n_threads: usize,
+                stack: DynStack<'_>,
+            ) {
+                use microkernel::scalar::$ty::*;
+                gemm_basic_generic::<T, N, MR, NR>(
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    n_threads,
+                    |mr_div_n, nr| match (mr_div_n, nr) {
+                        (1, 1) => x1x1,
+                        (1, 2) => x1x2,
+                        (1, 3) => x1x3,
+                        (1, 4) => x1x4,
+
+                        (2, 1) => x2x1,
+                        (2, 2) => x2x2,
+                        (2, 3) => x2x3,
+                        (2, 4) => x2x4,
+
+                        _ => unreachable!(),
+                    },
+                    stack,
+                );
+            }
+        }
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         mod sse {
             use super::*;
             const N: usize = 2 * $multiplier;
@@ -351,9 +440,11 @@ macro_rules! gemm_def {
                 max_k: usize,
                 max_n_threads: usize,
             ) -> Result<StackReq, SizeOverflow> {
-                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+                gemm_basic_req_generic::<T>(MR, NR, max_m, max_n, max_k, max_n_threads)
             }
 
+            #[target_feature(enable = "sse")]
+            #[inline(never)]
             pub unsafe fn gemm_basic(
                 m: usize,
                 n: usize,
@@ -371,10 +462,10 @@ macro_rules! gemm_def {
                 alpha: T,
                 beta: T,
                 n_threads: usize,
-                stack: DynStack,
+                stack: DynStack<'_>,
             ) {
                 use microkernel::sse::$ty::*;
-                gemm_basic_generic::<T, _, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR>(
                     m,
                     n,
                     k,
@@ -409,6 +500,7 @@ macro_rules! gemm_def {
             }
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         mod avx {
             use super::*;
             const N: usize = 4 * $multiplier;
@@ -421,9 +513,11 @@ macro_rules! gemm_def {
                 max_k: usize,
                 max_n_threads: usize,
             ) -> Result<StackReq, SizeOverflow> {
-                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+                gemm_basic_req_generic::<T>(MR, NR, max_m, max_n, max_k, max_n_threads)
             }
 
+            #[target_feature(enable = "avx")]
+            #[inline(never)]
             pub unsafe fn gemm_basic(
                 m: usize,
                 n: usize,
@@ -441,10 +535,10 @@ macro_rules! gemm_def {
                 alpha: T,
                 beta: T,
                 n_threads: usize,
-                stack: DynStack,
+                stack: DynStack<'_>,
             ) {
                 use microkernel::avx::$ty::*;
-                gemm_basic_generic::<T, _, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR>(
                     m,
                     n,
                     k,
@@ -479,7 +573,8 @@ macro_rules! gemm_def {
             }
         }
 
-        mod avx2 {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        mod fma {
             use super::*;
             const N: usize = 4 * $multiplier;
             const MR: usize = 3 * N;
@@ -491,9 +586,11 @@ macro_rules! gemm_def {
                 max_k: usize,
                 max_n_threads: usize,
             ) -> Result<StackReq, SizeOverflow> {
-                gemm_basic_req_generic::<T>(N, MR, NR, max_m, max_n, max_k, max_n_threads)
+                gemm_basic_req_generic::<T>(MR, NR, max_m, max_n, max_k, max_n_threads)
             }
 
+            #[target_feature(enable = "fma")]
+            #[inline(never)]
             pub unsafe fn gemm_basic(
                 m: usize,
                 n: usize,
@@ -511,10 +608,10 @@ macro_rules! gemm_def {
                 alpha: T,
                 beta: T,
                 n_threads: usize,
-                stack: DynStack,
+                stack: DynStack<'_>,
             ) {
-                use microkernel::avx2::$ty::*;
-                gemm_basic_generic::<T, _, N, MR, NR>(
+                use microkernel::fma::$ty::*;
+                gemm_basic_generic::<T, N, MR, NR>(
                     m,
                     n,
                     k,
@@ -553,6 +650,96 @@ macro_rules! gemm_def {
                 );
             }
         }
+
+        #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
+        mod avx512f {
+            use super::*;
+            const N: usize = 8 * $multiplier;
+            const MR: usize = 3 * N;
+            const NR: usize = 8;
+
+            pub fn gemm_req(
+                max_m: usize,
+                max_n: usize,
+                max_k: usize,
+                max_n_threads: usize,
+            ) -> Result<StackReq, SizeOverflow> {
+                gemm_basic_req_generic::<T>(MR, NR, max_m, max_n, max_k, max_n_threads)
+            }
+
+            #[target_feature(enable = "avx512f")]
+            #[inline(never)]
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                n_threads: usize,
+                stack: DynStack<'_>,
+            ) {
+                use microkernel::avx512f::$ty::*;
+                gemm_basic_generic::<T, N, MR, NR>(
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    n_threads,
+                    |mr_div_n, nr| match (mr_div_n, nr) {
+                        (1, 1) => x1x1,
+                        (1, 2) => x1x2,
+                        (1, 3) => x1x3,
+                        (1, 4) => x1x4,
+                        (1, 5) => x1x5,
+                        (1, 6) => x1x6,
+                        (1, 7) => x1x7,
+                        (1, 8) => x1x8,
+
+                        (2, 1) => x2x1,
+                        (2, 2) => x2x2,
+                        (2, 3) => x2x3,
+                        (2, 4) => x2x4,
+                        (2, 5) => x2x5,
+                        (2, 6) => x2x6,
+                        (2, 7) => x2x7,
+                        (2, 8) => x2x8,
+
+                        (3, 1) => x3x1,
+                        (3, 2) => x3x2,
+                        (3, 3) => x3x3,
+                        (3, 4) => x3x4,
+                        (3, 5) => x3x5,
+                        (3, 6) => x3x6,
+                        (3, 7) => x3x7,
+                        (3, 8) => x3x8,
+
+                        _ => unreachable!(),
+                    },
+                    stack,
+                );
+            }
+        }
     };
 }
 
@@ -563,22 +750,18 @@ mod f64 {
     gemm_def!(f64, 1);
 }
 
-fn unique_id<T>() -> usize {
-    (unique_id::<T>) as usize
-}
-
-pub fn gemm_req<T>(
+pub fn gemm_req<T: 'static>(
     max_m: usize,
     max_n: usize,
     max_k: usize,
     max_n_threads: usize,
 ) -> Result<StackReq, SizeOverflow> {
-    if unique_id::<T>() == unique_id::<f64>() {
+    if TypeId::of::<T>() == TypeId::of::<f64>() {
         crate::gemm::f64::gemm_req(max_m, max_n, max_k, max_n_threads)
-    } else if unique_id::<T>() == unique_id::<f32>() {
+    } else if TypeId::of::<T>() == TypeId::of::<f32>() {
         crate::gemm::f32::gemm_req(max_m, max_n, max_k, max_n_threads)
     } else {
-        Ok(StackReq::new::<()>(0))
+        Ok(StackReq::default())
     }
 }
 
@@ -599,13 +782,13 @@ pub unsafe fn gemm<T>(
     alpha: T,
     beta: T,
     n_threads: usize,
-    stack: DynStack,
+    stack: DynStack<'_>,
 ) where
-    T: Zero + Send + Sync,
+    T: Zero + Send + Sync + 'static,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
 {
-    if unique_id::<T>() == unique_id::<f64>() {
+    if TypeId::of::<T>() == TypeId::of::<f64>() {
         crate::gemm::f64::gemm_basic(
             m,
             n,
@@ -625,7 +808,7 @@ pub unsafe fn gemm<T>(
             n_threads,
             stack,
         )
-    } else if unique_id::<T>() == unique_id::<f32>() {
+    } else if TypeId::of::<T>() == TypeId::of::<f32>() {
         crate::gemm::f32::gemm_basic(
             m,
             n,
@@ -646,7 +829,7 @@ pub unsafe fn gemm<T>(
             stack,
         )
     } else {
-        gemm_correct(
+        gemm_fallback(
             m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
             alpha, beta, n_threads, stack,
         )
@@ -654,7 +837,7 @@ pub unsafe fn gemm<T>(
 }
 
 #[inline(never)]
-pub(crate) unsafe fn gemm_correct<T>(
+pub(crate) unsafe fn gemm_fallback<T>(
     m: usize,
     n: usize,
     k: usize,
@@ -671,43 +854,70 @@ pub(crate) unsafe fn gemm_correct<T>(
     alpha: T,
     beta: T,
     n_threads: usize,
-    stack: DynStack,
+    stack: DynStack<'_>,
 ) where
     T: Zero + Send + Sync,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
 {
-    let _n_threads = n_threads;
     let _stack = stack;
 
     let dst = Ptr(dst);
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    use rayon::prelude::*;
-    (0..m).into_par_iter().for_each(|row| {
-        (0..n).into_par_iter().for_each(|col| {
-            let mut accum = <T as Zero>::zero();
-            for depth in 0..k {
-                let lhs = &*lhs
-                    .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
+    if n_threads == 1 {
+        (0..m).for_each(|row| {
+            (0..n).for_each(|col| {
+                let mut accum = <T as Zero>::zero();
+                for depth in 0..k {
+                    let lhs = &*lhs
+                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
+                        .0;
+
+                    let rhs = &*rhs
+                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
+                        .0;
+
+                    accum = &accum + &(lhs * rhs);
+                }
+                accum = &accum * &beta;
+
+                let dst = dst
+                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
                     .0;
-
-                let rhs = &*rhs
-                    .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
-                    .0;
-
-                accum = &accum + &(lhs * rhs);
-            }
-            accum = &accum * &beta;
-
-            let dst = dst
-                .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
-                .0;
-            if read_dst {
-                accum = &accum + &(&alpha * &*dst);
-            }
-            *dst = accum
+                if read_dst {
+                    accum = &accum + &(&alpha * &*dst);
+                }
+                *dst = accum
+            });
         });
-    });
+    } else {
+        use rayon::prelude::*;
+        (0..m).into_par_iter().for_each(|row| {
+            (0..n).into_par_iter().for_each(|col| {
+                let mut accum = <T as Zero>::zero();
+                for depth in 0..k {
+                    let lhs = &*lhs
+                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
+                        .0;
+
+                    let rhs = &*rhs
+                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
+                        .0;
+
+                    accum = &accum + &(lhs * rhs);
+                }
+                accum = &accum * &beta;
+
+                let dst = dst
+                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+                    .0;
+                if read_dst {
+                    accum = &accum + &(&alpha * &*dst);
+                }
+                *dst = accum
+            });
+        });
+    }
 }

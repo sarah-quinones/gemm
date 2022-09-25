@@ -14,14 +14,20 @@ lazy_static = "1.4"
 rayon = "1.5"
 raw-cpuid = "10.3"
 seq-macro = "0.3"
-dyn-stack = "0.3"
+dyn-stack = "0.8"
 num-traits = "0.2"
+strength_reduce = "0.2"
+aligned-vec = "0.5"
 
 [dev-dependencies]
 criterion = "0.3"
 rand = "0.8.5"
 nalgebra = "0.31.0"
 assert_approx_eq = "1.1.0"
+
+[features]
+default = []
+nightly = []
 
 [[bench]]
 name = "gemm"

@@ -1,10 +1,13 @@
+#![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
+#![warn(rust_2018_idioms)]
+
 mod cache;
 mod gemm;
 mod microkernel;
 mod pack_operands;
 
-pub use gemm::gemm;
-pub use gemm::gemm_req;
+pub use crate::gemm::gemm;
+pub use crate::gemm::gemm_req;
 
 pub(crate) struct Ptr<T>(*mut T);
 
@@ -35,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_gemm() {
-        use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
+        use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
 
         let mut mnks = vec![];
         mnks.push((1, 1, 2));
@@ -52,7 +55,7 @@ mod tests {
             let mut c_vec = vec![0.0; m * n];
             let mut d_vec = vec![0.0; m * n];
 
-            let mut mem = uninit_mem_in_global(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
+            let mut mem = GlobalMemBuffer::new(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
             unsafe {
                 gemm::gemm(
@@ -75,7 +78,7 @@ mod tests {
                     stack.rb_mut(),
                 );
 
-                gemm::gemm_correct(
+                gemm::gemm_fallback(
                     m,
                     n,
                     k,

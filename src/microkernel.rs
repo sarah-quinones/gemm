@@ -1,6 +1,7 @@
 macro_rules! microkernel {
-    ($name: ident, $mr_div_n: tt, $nr: tt) => {
-        #[inline(always)]
+    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
+        #[inline]
+        $(#[target_feature(enable = $target)])?
         pub(crate) unsafe fn $name(
             m: usize,
             n: usize,
@@ -204,20 +205,19 @@ macro_rules! microkernel {
     };
 }
 
-pub mod sse {
+pub mod scalar {
     pub mod f32 {
-        use core::arch::x86_64::*;
         use core::mem::MaybeUninit;
 
         type T = f32;
-        const N: usize = 4;
+        const N: usize = 1;
         type Pack = [T; N];
 
         #[inline(always)]
         unsafe fn gather(base: *const T, stride: isize) -> Pack {
             let mut p = MaybeUninit::<Pack>::uninit();
             let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..4 {
+            seq_macro::seq!(ITER in 0..1 {
                 *ptr.add(ITER) = *base.offset(ITER * stride);
             });
             p.assume_init()
@@ -226,36 +226,24 @@ pub mod sse {
         #[inline(always)]
         unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
             let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..4 {
+            seq_macro::seq!(ITER in 0..1 {
                 *base.offset(ITER * stride) = *ptr.add(ITER);
             });
         }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_ps(out.as_mut_ptr() as *mut f32, _mm_set1_ps(value));
-            out.assume_init()
+            [value]
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm_mul_ps(_mm_loadu_ps(lhs.as_ptr()), _mm_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            [lhs[0] * rhs[0]]
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm_add_ps(_mm_loadu_ps(lhs.as_ptr()), _mm_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            [lhs[0] + rhs[0]]
         }
 
         #[inline(always)]
@@ -263,19 +251,23 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(, x1x1, 1, 1);
+        microkernel!(, x1x2, 1, 2);
+        microkernel!(, x1x3, 1, 3);
+        microkernel!(, x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(, x2x1, 2, 1);
+        microkernel!(, x2x2, 2, 2);
+        microkernel!(, x2x3, 2, 3);
+        microkernel!(, x2x4, 2, 4);
     }
 
     pub mod f64 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
+        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f64;
@@ -302,29 +294,17 @@ pub mod sse {
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_pd(out.as_mut_ptr() as *mut f64, _mm_set1_pd(value));
-            out.assume_init()
+            transmute(_mm_set1_pd(value))
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm_mul_pd(_mm_loadu_pd(lhs.as_ptr()), _mm_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm_mul_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm_add_pd(_mm_loadu_pd(lhs.as_ptr()), _mm_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm_add_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
@@ -332,21 +312,151 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(, x1x1, 1, 1);
+        microkernel!(, x1x2, 1, 2);
+        microkernel!(, x1x3, 1, 3);
+        microkernel!(, x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(, x2x1, 2, 1);
+        microkernel!(, x2x2, 2, 2);
+        microkernel!(, x2x3, 2, 3);
+        microkernel!(, x2x4, 2, 4);
     }
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub mod sse {
+    pub mod f32 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::*;
+        use core::mem::transmute;
+        use core::mem::MaybeUninit;
+
+        type T = f32;
+        const N: usize = 4;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..4 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..4 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            transmute(_mm_set1_ps(value))
+        }
+
+        #[inline(always)]
+        unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm_mul_ps(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm_add_ps(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            add(mul(a, b), c)
+        }
+
+        microkernel!(["sse"], x1x1, 1, 1);
+        microkernel!(["sse"], x1x2, 1, 2);
+        microkernel!(["sse"], x1x3, 1, 3);
+        microkernel!(["sse"], x1x4, 1, 4);
+
+        microkernel!(["sse"], x2x1, 2, 1);
+        microkernel!(["sse"], x2x2, 2, 2);
+        microkernel!(["sse"], x2x3, 2, 3);
+        microkernel!(["sse"], x2x4, 2, 4);
+    }
+
+    pub mod f64 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::*;
+        use core::mem::transmute;
+        use core::mem::MaybeUninit;
+
+        type T = f64;
+        const N: usize = 2;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..2 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..2 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            transmute(_mm_set1_pd(value))
+        }
+
+        #[inline(always)]
+        unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm_mul_pd(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm_add_pd(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            add(mul(a, b), c)
+        }
+
+        microkernel!(["sse"], x1x1, 1, 1);
+        microkernel!(["sse"], x1x2, 1, 2);
+        microkernel!(["sse"], x1x3, 1, 3);
+        microkernel!(["sse"], x1x4, 1, 4);
+
+        microkernel!(["sse"], x2x1, 2, 1);
+        microkernel!(["sse"], x2x2, 2, 2);
+        microkernel!(["sse"], x2x3, 2, 3);
+        microkernel!(["sse"], x2x4, 2, 4);
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod avx {
     pub mod f32 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
+        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f32;
@@ -373,29 +483,17 @@ pub mod avx {
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(out.as_mut_ptr() as *mut f32, _mm256_set1_ps(value));
-            out.assume_init()
+            transmute(_mm256_set1_ps(value))
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm256_mul_ps(_mm256_loadu_ps(lhs.as_ptr()), _mm256_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_mul_ps(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm256_add_ps(_mm256_loadu_ps(lhs.as_ptr()), _mm256_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_add_ps(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
@@ -403,19 +501,23 @@ pub mod avx {
             add(mul(a, b), c)
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(["avx"], x1x1, 1, 1);
+        microkernel!(["avx"], x1x2, 1, 2);
+        microkernel!(["avx"], x1x3, 1, 3);
+        microkernel!(["avx"], x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(["avx"], x2x1, 2, 1);
+        microkernel!(["avx"], x2x2, 2, 2);
+        microkernel!(["avx"], x2x3, 2, 3);
+        microkernel!(["avx"], x2x4, 2, 4);
     }
-    
+
     pub mod f64 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
+        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f64;
@@ -442,29 +544,17 @@ pub mod avx {
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(out.as_mut_ptr() as *mut f64, _mm256_set1_pd(value));
-            out.assume_init()
+            transmute(_mm256_set1_pd(value))
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm256_mul_pd(_mm256_loadu_pd(lhs.as_ptr()), _mm256_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_mul_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm256_add_pd(_mm256_loadu_pd(lhs.as_ptr()), _mm256_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_add_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
@@ -472,21 +562,26 @@ pub mod avx {
             add(mul(a, b), c)
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(["avx"], x1x1, 1, 1);
+        microkernel!(["avx"], x1x2, 1, 2);
+        microkernel!(["avx"], x1x3, 1, 3);
+        microkernel!(["avx"], x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(["avx"], x2x1, 2, 1);
+        microkernel!(["avx"], x2x2, 2, 2);
+        microkernel!(["avx"], x2x3, 2, 3);
+        microkernel!(["avx"], x2x4, 2, 4);
     }
 }
 
-pub mod avx2 {
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub mod fma {
     pub mod f32 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
+        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f32;
@@ -513,63 +608,46 @@ pub mod avx2 {
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(out.as_mut_ptr() as *mut f32, _mm256_set1_ps(value));
-            out.assume_init()
+            transmute(_mm256_set1_ps(value))
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm256_mul_ps(_mm256_loadu_ps(lhs.as_ptr()), _mm256_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_mul_ps(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm256_add_ps(_mm256_loadu_ps(lhs.as_ptr()), _mm256_loadu_ps(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_add_ps(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_ps(
-                out.as_mut_ptr() as *mut f32,
-                _mm256_fmadd_ps(
-                    _mm256_loadu_ps(a.as_ptr()),
-                    _mm256_loadu_ps(b.as_ptr()),
-                    _mm256_loadu_ps(c.as_ptr()),
-                ),
-            );
-            out.assume_init()
+            transmute(_mm256_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(["fma"], x1x1, 1, 1);
+        microkernel!(["fma"], x1x2, 1, 2);
+        microkernel!(["fma"], x1x3, 1, 3);
+        microkernel!(["fma"], x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(["fma"], x2x1, 2, 1);
+        microkernel!(["fma"], x2x2, 2, 2);
+        microkernel!(["fma"], x2x3, 2, 3);
+        microkernel!(["fma"], x2x4, 2, 4);
 
-        microkernel!(x3x1, 3, 1);
-        microkernel!(x3x2, 3, 2);
-        microkernel!(x3x3, 3, 3);
-        microkernel!(x3x4, 3, 4);
+        microkernel!(["fma"], x3x1, 3, 1);
+        microkernel!(["fma"], x3x2, 3, 2);
+        microkernel!(["fma"], x3x3, 3, 3);
+        microkernel!(["fma"], x3x4, 3, 4);
     }
 
     pub mod f64 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
+        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f64;
@@ -596,58 +674,196 @@ pub mod avx2 {
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(out.as_mut_ptr() as *mut f64, _mm256_set1_pd(value));
-            out.assume_init()
+            transmute(_mm256_set1_pd(value))
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm256_mul_pd(_mm256_loadu_pd(lhs.as_ptr()), _mm256_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_mul_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm256_add_pd(_mm256_loadu_pd(lhs.as_ptr()), _mm256_loadu_pd(rhs.as_ptr())),
-            );
-            out.assume_init()
+            transmute(_mm256_add_pd(transmute(lhs), transmute(rhs)))
         }
 
         #[inline(always)]
         unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
-            let mut out = MaybeUninit::<Pack>::uninit();
-            _mm256_storeu_pd(
-                out.as_mut_ptr() as *mut f64,
-                _mm256_fmadd_pd(
-                    _mm256_loadu_pd(a.as_ptr()),
-                    _mm256_loadu_pd(b.as_ptr()),
-                    _mm256_loadu_pd(c.as_ptr()),
-                ),
-            );
-            out.assume_init()
+            transmute(_mm256_fmadd_pd(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(x1x1, 1, 1);
-        microkernel!(x1x2, 1, 2);
-        microkernel!(x1x3, 1, 3);
-        microkernel!(x1x4, 1, 4);
+        microkernel!(["fma"], x1x1, 1, 1);
+        microkernel!(["fma"], x1x2, 1, 2);
+        microkernel!(["fma"], x1x3, 1, 3);
+        microkernel!(["fma"], x1x4, 1, 4);
 
-        microkernel!(x2x1, 2, 1);
-        microkernel!(x2x2, 2, 2);
-        microkernel!(x2x3, 2, 3);
-        microkernel!(x2x4, 2, 4);
+        microkernel!(["fma"], x2x1, 2, 1);
+        microkernel!(["fma"], x2x2, 2, 2);
+        microkernel!(["fma"], x2x3, 2, 3);
+        microkernel!(["fma"], x2x4, 2, 4);
 
-        microkernel!(x3x1, 3, 1);
-        microkernel!(x3x2, 3, 2);
-        microkernel!(x3x3, 3, 3);
-        microkernel!(x3x4, 3, 4);
+        microkernel!(["fma"], x3x1, 3, 1);
+        microkernel!(["fma"], x3x2, 3, 2);
+        microkernel!(["fma"], x3x3, 3, 3);
+        microkernel!(["fma"], x3x4, 3, 4);
+    }
+}
+
+#[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
+pub mod avx512f {
+    pub mod f32 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::*;
+        use core::mem::transmute;
+        use core::mem::MaybeUninit;
+
+        type T = f32;
+        const N: usize = 16;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..16 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..16 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            transmute(_mm512_set1_ps(value))
+        }
+
+        #[inline(always)]
+        unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm512_mul_ps(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm512_add_ps(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(_mm512_fmadd_ps(transmute(a), transmute(b), transmute(c)))
+        }
+
+        microkernel!(["avx512f"], x1x1, 1, 1);
+        microkernel!(["avx512f"], x1x2, 1, 2);
+        microkernel!(["avx512f"], x1x3, 1, 3);
+        microkernel!(["avx512f"], x1x4, 1, 4);
+        microkernel!(["avx512f"], x1x5, 1, 5);
+        microkernel!(["avx512f"], x1x6, 1, 6);
+        microkernel!(["avx512f"], x1x7, 1, 7);
+        microkernel!(["avx512f"], x1x8, 1, 8);
+
+        microkernel!(["avx512f"], x2x1, 2, 1);
+        microkernel!(["avx512f"], x2x2, 2, 2);
+        microkernel!(["avx512f"], x2x3, 2, 3);
+        microkernel!(["avx512f"], x2x4, 2, 4);
+        microkernel!(["avx512f"], x2x5, 2, 5);
+        microkernel!(["avx512f"], x2x6, 2, 6);
+        microkernel!(["avx512f"], x2x7, 2, 7);
+        microkernel!(["avx512f"], x2x8, 2, 8);
+
+        microkernel!(["avx512f"], x3x1, 3, 1);
+        microkernel!(["avx512f"], x3x2, 3, 2);
+        microkernel!(["avx512f"], x3x3, 3, 3);
+        microkernel!(["avx512f"], x3x4, 3, 4);
+        microkernel!(["avx512f"], x3x5, 3, 5);
+        microkernel!(["avx512f"], x3x6, 3, 6);
+        microkernel!(["avx512f"], x3x7, 3, 7);
+        microkernel!(["avx512f"], x3x8, 3, 8);
+    }
+
+    pub mod f64 {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::*;
+        use core::mem::transmute;
+        use core::mem::MaybeUninit;
+
+        type T = f64;
+        const N: usize = 8;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..8 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..8 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            transmute(_mm512_set1_pd(value))
+        }
+
+        #[inline(always)]
+        unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm512_mul_pd(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(_mm512_add_pd(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(_mm512_fmadd_pd(transmute(a), transmute(b), transmute(c)))
+        }
+
+        microkernel!(["avx512f"], x1x1, 1, 1);
+        microkernel!(["avx512f"], x1x2, 1, 2);
+        microkernel!(["avx512f"], x1x3, 1, 3);
+        microkernel!(["avx512f"], x1x4, 1, 4);
+        microkernel!(["avx512f"], x1x5, 1, 5);
+        microkernel!(["avx512f"], x1x6, 1, 6);
+        microkernel!(["avx512f"], x1x7, 1, 7);
+        microkernel!(["avx512f"], x1x8, 1, 8);
+
+        microkernel!(["avx512f"], x2x1, 2, 1);
+        microkernel!(["avx512f"], x2x2, 2, 2);
+        microkernel!(["avx512f"], x2x3, 2, 3);
+        microkernel!(["avx512f"], x2x4, 2, 4);
+        microkernel!(["avx512f"], x2x5, 2, 5);
+        microkernel!(["avx512f"], x2x6, 2, 6);
+        microkernel!(["avx512f"], x2x7, 2, 7);
+        microkernel!(["avx512f"], x2x8, 2, 8);
+
+        microkernel!(["avx512f"], x3x1, 3, 1);
+        microkernel!(["avx512f"], x3x2, 3, 2);
+        microkernel!(["avx512f"], x3x3, 3, 3);
+        microkernel!(["avx512f"], x3x4, 3, 4);
+        microkernel!(["avx512f"], x3x5, 3, 5);
+        microkernel!(["avx512f"], x3x6, 3, 6);
+        microkernel!(["avx512f"], x3x7, 3, 7);
+        microkernel!(["avx512f"], x3x8, 3, 8);
     }
 }

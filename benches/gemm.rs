@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use dyn_stack::{uninit_mem_in_global, DynStack, ReborrowMut};
-use gemm::gemm::{gemm, gemm_req};
+use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
+use gemm::{gemm, gemm_req};
 use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -16,11 +16,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let b_vec = vec![0.0; k * n];
             let mut c_vec = vec![0.0; m * n];
 
-            let n_threads = rayon::current_num_threads();
+            let n_threads = 12;
 
-            let mut mem = uninit_mem_in_global(gemm_req::<f64>(m, n, k, n_threads).unwrap());
+            let mut mem = GlobalMemBuffer::new(gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
-            c.bench_function(&format!("lib-{}×{}×{}", m, n, k), |b| {
+            c.bench_function(&format!("gemm-{}×{}×{}", m, n, k), |b| {
                 b.iter(|| unsafe {
                     gemm(
                         m,
@@ -49,7 +49,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let a_mat = DMatrix::<f64>::zeros(m, k);
             let b_mat = DMatrix::<f64>::zeros(k, n);
             let mut c_mat = DMatrix::<f64>::zeros(m, n);
-            c.bench_function(&format!("alg-{}×{}×{}", m, n, k), |b| {
+            c.bench_function(&format!("nalg-{}×{}×{}", m, n, k), |b| {
                 b.iter(|| c_mat = &a_mat * &b_mat)
             });
         }
