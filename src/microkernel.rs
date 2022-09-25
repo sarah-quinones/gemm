@@ -147,7 +147,7 @@ macro_rules! microkernel {
                         let alpha = splat(alpha);
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs);
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
                                 scatter(
                                     dst,
                                     dst_rs,
@@ -161,7 +161,7 @@ macro_rules! microkernel {
                     } else {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs);
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
                                 scatter(
                                     dst,
                                     dst_rs,
@@ -263,22 +263,17 @@ pub mod scalar {
     }
 
     pub mod f64 {
-        #[cfg(target_arch = "x86")]
-        use core::arch::x86::*;
-        #[cfg(target_arch = "x86_64")]
-        use core::arch::x86_64::*;
-        use core::mem::transmute;
         use core::mem::MaybeUninit;
 
         type T = f64;
-        const N: usize = 2;
+        const N: usize = 1;
         type Pack = [T; N];
 
         #[inline(always)]
         unsafe fn gather(base: *const T, stride: isize) -> Pack {
             let mut p = MaybeUninit::<Pack>::uninit();
             let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..2 {
+            seq_macro::seq!(ITER in 0..1 {
                 *ptr.add(ITER) = *base.offset(ITER * stride);
             });
             p.assume_init()
@@ -287,24 +282,24 @@ pub mod scalar {
         #[inline(always)]
         unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
             let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..2 {
+            seq_macro::seq!(ITER in 0..1 {
                 *base.offset(ITER * stride) = *ptr.add(ITER);
             });
         }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
-            transmute(_mm_set1_pd(value))
+            [value]
         }
 
         #[inline(always)]
         unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
-            transmute(_mm_mul_pd(transmute(lhs), transmute(rhs)))
+            [lhs[0] * rhs[0]]
         }
 
         #[inline(always)]
         unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
-            transmute(_mm_add_pd(transmute(lhs), transmute(rhs)))
+            [lhs[0] + rhs[0]]
         }
 
         #[inline(always)]

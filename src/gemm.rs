@@ -2,7 +2,7 @@ use crate::{
     cache::{kernel_params, KernelParams},
     microkernel,
     pack_operands::{pack_lhs, pack_rhs},
-    Ptr,
+    x86_feature_detected, Ptr,
 };
 use aligned_vec::CACHELINE_ALIGN;
 use core::any::TypeId;
@@ -78,7 +78,7 @@ unsafe fn gemm_basic_generic<
     let simd_align = CACHELINE_ALIGN;
     let simd_stride = CACHELINE_ALIGN / core::mem::size_of::<T>();
 
-    let packed_rhs_stride = kc * NR;
+    let packed_rhs_stride = div_ceil(kc * NR, simd_stride) * simd_stride;
     let packed_lhs_stride = div_ceil(kc * MR, simd_stride) * simd_stride;
 
     let (mut packed_rhs_storage, mut stack) = stack.rb_mut().make_aligned_uninit::<T>(
@@ -198,13 +198,14 @@ unsafe fn gemm_basic_generic<
 
                             let dispatcher = dispatcher;
                             let func = dispatcher((m_chunk_inner + (N - 1)) / N, n_chunk_inner);
+
                             func(
                                 m_chunk_inner,
                                 n_chunk_inner,
                                 k_chunk,
                                 dst,
-                                packed_lhs.wrapping_add(row_inner * kc),
-                                packed_rhs.wrapping_add(col_inner * kc),
+                                packed_lhs.wrapping_add(i * packed_lhs_stride),
+                                packed_rhs.wrapping_add(j * packed_rhs_stride),
                                 dst_cs,
                                 dst_rs,
                                 MR as isize,
@@ -246,7 +247,7 @@ fn gemm_basic_req_generic<T>(
         kernel_params(max_m, max_n, max_k, mr, nr, core::mem::size_of::<T>());
     let simd_align = CACHELINE_ALIGN;
     let simd_stride = CACHELINE_ALIGN / core::mem::size_of::<T>();
-    let packed_rhs_stride = kc * nr;
+    let packed_rhs_stride = div_ceil(kc * nr, simd_stride) * simd_stride;
     let packed_lhs_stride = div_ceil(kc * mr, simd_stride) * simd_stride;
 
     StackReq::try_new_aligned::<T>(
@@ -287,31 +288,32 @@ macro_rules! gemm_def {
             fn(usize, usize, usize, usize) -> Result<StackReq, SizeOverflow>,
         );
 
-        lazy_static::lazy_static! {
-            static ref GEMM: GemmTy = || -> GemmTy {
-
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                {
-                    #[cfg(feature = "nightly")]
-                    if is_x86_feature_detected!("avx512f") {
-                        return (avx512f::gemm_basic, avx512f::gemm_req);
-                    }
-                    if is_x86_feature_detected!("fma") {
-                        (fma::gemm_basic, fma::gemm_req)
-                    } else if is_x86_feature_detected!("avx") {
-                        (avx::gemm_basic, avx::gemm_req)
-                    } else if is_x86_feature_detected!("sse") {
-                        (sse::gemm_basic, sse::gemm_req)
-                    } else {
-                        (scalar::gemm_basic, scalar::gemm_req)
-                    }
+        fn init_gemm_fn() -> GemmTy {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                #[cfg(feature = "nightly")]
+                if x86_feature_detected!("avx512f") {
+                    return (avx512f::gemm_basic, avx512f::gemm_req);
                 }
-
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-                {
+                if x86_feature_detected!("fma") {
+                    (fma::gemm_basic, fma::gemm_req)
+                } else if x86_feature_detected!("avx") {
+                    (avx::gemm_basic, avx::gemm_req)
+                } else if x86_feature_detected!("sse") {
+                    (sse::gemm_basic, sse::gemm_req)
+                } else {
                     (scalar::gemm_basic, scalar::gemm_req)
                 }
-            }();
+            }
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            {
+                (scalar::gemm_basic, scalar::gemm_req)
+            }
+        }
+
+        lazy_static::lazy_static! {
+            static ref GEMM: GemmTy = init_gemm_fn();
         }
 
         pub fn gemm_req(

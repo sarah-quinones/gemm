@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
 
 mod cache;
@@ -32,22 +33,43 @@ impl<T> Ptr<T> {
     }
 }
 
+#[cfg(feature = "std")]
+macro_rules! x86_feature_detected {
+    ($tt: tt) => {
+        is_x86_feature_detected!($tt)
+    };
+}
+
+#[cfg(not(feature = "std"))]
+macro_rules! x86_feature_detected {
+    ($tt: tt) => {
+        cfg!(feature = $tt)
+    };
+}
+
+pub(crate) use x86_feature_detected;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::{vec, vec::Vec};
 
     #[test]
     fn test_gemm() {
         use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
 
         let mut mnks = vec![];
+        mnks.push((16, 16, 1));
+        mnks.push((8, 16, 1));
+        mnks.push((16, 8, 1));
         mnks.push((1, 1, 2));
         mnks.push((4, 4, 4));
         mnks.push((256, 256, 256));
-        mnks.push((1024, 1024, 1));
+        mnks.push((1024, 1024, 4));
         mnks.push((4096, 4096, 1));
 
-        let n_threads = rayon::current_num_threads();
+        let n_threads = 1;
 
         for (m, n, k) in mnks {
             let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();

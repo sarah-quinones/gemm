@@ -1,6 +1,6 @@
 [package]
 name = "gemm"
-version = "0.4.0"
+version = "0.6.0"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
@@ -26,7 +26,8 @@ nalgebra = "0.31.0"
 assert_approx_eq = "1.1.0"
 
 [features]
-default = []
+default = ["std"]
+std = []
 nightly = []
 
 [[bench]]

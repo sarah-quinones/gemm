@@ -16,7 +16,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let b_vec = vec![0.0; k * n];
             let mut c_vec = vec![0.0; m * n];
 
-            let n_threads = 12;
+            let n_threads = rayon::current_num_threads();
 
             let mut mem = GlobalMemBuffer::new(gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
