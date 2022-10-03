@@ -71,9 +71,11 @@ unsafe fn gemm_basic_generic<
         return;
     }
 
-    let n_threads = StrengthReducedUsize::new(n_threads);
-
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
+
+    // use a single thread for small workloads
+    let n_threads = if mc * nc * kc <= 48 * 48 * 256 { 1 } else { n_threads };
+    let n_threads = StrengthReducedUsize::new(n_threads);
 
     let simd_align = CACHELINE_ALIGN;
     let simd_stride = CACHELINE_ALIGN / core::mem::size_of::<T>();

@@ -141,10 +141,18 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 #[inline]
+#[track_caller]
 fn div_ceil(a: usize, b: usize) -> usize {
-    (a + (b - 1)) / b
+    let d = a / b;
+    let r = a % b;
+    if r > 0 && b > 0 {
+        d + 1
+    } else {
+        d
+    }
 }
 #[inline]
+#[track_caller]
 fn round_down(a: usize, b: usize) -> usize {
     a / b * b
 }
@@ -158,6 +166,14 @@ pub fn kernel_params(
     nr: usize,
     sizeof: usize,
 ) -> KernelParams {
+    if m == 0 || n == 0 || k == 0 {
+        return KernelParams {
+            kc: k,
+            mc: m,
+            nc: n,
+        };
+    }
+
     let info = *CACHE_INFO;
 
     let l1_cache_bytes = info[0].cache_bytes;
