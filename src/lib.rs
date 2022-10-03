@@ -60,6 +60,10 @@ mod tests {
         use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
 
         let mut mnks = vec![];
+        mnks.push((16, 1, 1));
+        mnks.push((16, 2, 1));
+        mnks.push((16, 3, 1));
+        mnks.push((16, 4, 1));
         mnks.push((16, 16, 1));
         mnks.push((8, 16, 1));
         mnks.push((16, 8, 1));
@@ -68,6 +72,10 @@ mod tests {
         mnks.push((256, 256, 256));
         mnks.push((1024, 1024, 4));
         mnks.push((4096, 4096, 1));
+        mnks.push((63, 1, 1));
+        mnks.push((63, 2, 1));
+        mnks.push((63, 3, 1));
+        mnks.push((63, 4, 1));
 
         let n_threads = 1;
 

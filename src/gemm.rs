@@ -23,7 +23,7 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[inline(always)]
 unsafe fn gemm_basic_generic<
-    T: Copy + One + Send + Sync,
+    T: Copy + One + Send + Sync + core::ops::Add<Output = T> + core::ops::Mul<Output = T>,
     const N: usize,
     const MR: usize,
     const NR: usize,
@@ -71,10 +71,172 @@ unsafe fn gemm_basic_generic<
         return;
     }
 
+    // n is greater than or equal to m, no need to handle gemv case directly
+
+    // gevm case
+    if m <= 4 {
+        match m {
+            1 => {
+                for depth in 0..k {
+                    if depth == 0 {
+                        for col in 0..n {
+                            for row in 0..1 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = alpha * *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..1 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    }
+                }
+            }
+            2 => {
+                for depth in 0..k {
+                    if depth == 0 {
+                        for col in 0..n {
+                            for row in 0..2 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = alpha * *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..2 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    }
+                }
+            }
+            3 => {
+                for depth in 0..k {
+                    if depth == 0 {
+                        for col in 0..n {
+                            for row in 0..3 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = alpha * *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..3 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    }
+                }
+            }
+            4 => {
+                for depth in 0..k {
+                    if depth == 0 {
+                        for col in 0..n {
+                            for row in 0..4 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = alpha * *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..4 {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+        return;
+    }
+
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
     // use a single thread for small workloads
-    let n_threads = if mc * nc * kc <= 48 * 48 * 256 { 1 } else { n_threads };
+    let n_threads = if mc * nc * kc <= 48 * 48 * 256 {
+        1
+    } else {
+        n_threads
+    };
     let n_threads = StrengthReducedUsize::new(n_threads);
 
     let simd_align = CACHELINE_ALIGN;
