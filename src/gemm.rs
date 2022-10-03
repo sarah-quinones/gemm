@@ -23,7 +23,7 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[inline(always)]
 unsafe fn gemm_basic_generic<
-    T: Copy + One + Send + Sync + core::ops::Add<Output = T> + core::ops::Mul<Output = T>,
+    T: Copy + Zero + One + Send + Sync + core::ops::Add<Output = T> + core::ops::Mul<Output = T>,
     const N: usize,
     const MR: usize,
     const NR: usize,
@@ -71,159 +71,93 @@ unsafe fn gemm_basic_generic<
         return;
     }
 
-    // n is greater than or equal to m, no need to handle gemv case directly
+    if k == 0 {
+        if read_dst {
+            for col in 0..n {
+                for row in 0..m {
+                    let dst = dst
+                        .wrapping_offset(row as isize * dst_rs)
+                        .wrapping_offset(col as isize * dst_cs);
 
+                    *dst = alpha * *dst;
+                }
+            }
+        } else {
+            for col in 0..n {
+                for row in 0..m {
+                    let dst = dst
+                        .wrapping_offset(row as isize * dst_rs)
+                        .wrapping_offset(col as isize * dst_cs);
+
+                    *dst = T::zero();
+                }
+            }
+        }
+    }
+
+    // n is greater than or equal to m, no need to handle gemv case directly
     // gevm case
     if m <= 4 {
+        let do_work = |m| {
+            for depth in 0..k {
+                if depth == 0 {
+                    if read_dst {
+                        for col in 0..n {
+                            for row in 0..m {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = alpha * *dst + beta * *lhs * *rhs;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..m {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+                                let lhs = lhs
+                                    .wrapping_offset(row as isize * lhs_rs)
+                                    .wrapping_offset(depth as isize * lhs_cs);
+                                let rhs = rhs
+                                    .wrapping_offset(depth as isize * rhs_rs)
+                                    .wrapping_offset(col as isize * rhs_cs);
+
+                                *dst = beta * *lhs * *rhs;
+                            }
+                        }
+                    }
+                } else {
+                    for col in 0..n {
+                        for row in 0..m {
+                            let dst = dst
+                                .wrapping_offset(row as isize * dst_rs)
+                                .wrapping_offset(col as isize * dst_cs);
+                            let lhs = lhs
+                                .wrapping_offset(row as isize * lhs_rs)
+                                .wrapping_offset(depth as isize * lhs_cs);
+                            let rhs = rhs
+                                .wrapping_offset(depth as isize * rhs_rs)
+                                .wrapping_offset(col as isize * rhs_cs);
+
+                            *dst = *dst + beta * *lhs * *rhs;
+                        }
+                    }
+                }
+            }
+        };
         match m {
-            1 => {
-                for depth in 0..k {
-                    if depth == 0 {
-                        for col in 0..n {
-                            for row in 0..1 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = alpha * *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    } else {
-                        for col in 0..n {
-                            for row in 0..1 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    }
-                }
-            }
-            2 => {
-                for depth in 0..k {
-                    if depth == 0 {
-                        for col in 0..n {
-                            for row in 0..2 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = alpha * *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    } else {
-                        for col in 0..n {
-                            for row in 0..2 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    }
-                }
-            }
-            3 => {
-                for depth in 0..k {
-                    if depth == 0 {
-                        for col in 0..n {
-                            for row in 0..3 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = alpha * *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    } else {
-                        for col in 0..n {
-                            for row in 0..3 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    }
-                }
-            }
-            4 => {
-                for depth in 0..k {
-                    if depth == 0 {
-                        for col in 0..n {
-                            for row in 0..4 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = alpha * *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    } else {
-                        for col in 0..n {
-                            for row in 0..4 {
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-                                let lhs = lhs
-                                    .wrapping_offset(row as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                                let rhs = rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                *dst = *dst + beta * *lhs * *rhs;
-                            }
-                        }
-                    }
-                }
-            }
+            1 => do_work(1),
+            2 => do_work(2),
+            3 => do_work(3),
+            4 => do_work(4),
             _ => (),
         }
         return;
