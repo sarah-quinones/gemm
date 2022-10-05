@@ -33,14 +33,14 @@ unsafe fn gemm_basic_generic<
     n: usize,
     k: usize,
     mut dst: *mut T,
-    dst_cs: isize,
+    mut dst_cs: isize,
     mut dst_rs: isize,
     read_dst: bool,
     mut lhs: *const T,
     lhs_cs: isize,
     mut lhs_rs: isize,
-    rhs: *const T,
-    rhs_cs: isize,
+    mut rhs: *const T,
+    mut rhs_cs: isize,
     rhs_rs: isize,
     alpha: T,
     beta: T,
@@ -75,8 +75,15 @@ unsafe fn gemm_basic_generic<
     if dst_rs < 0 {
         dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
         dst_rs = -dst_rs;
-        lhs = lhs.wrapping_offset((m - 1) as isize * dst_rs);
+        lhs = lhs.wrapping_offset((m - 1) as isize * lhs_rs);
         lhs_rs = -lhs_rs;
+    }
+
+    if dst_cs < 0 {
+        dst = dst.wrapping_offset((n - 1) as isize * dst_cs);
+        dst_cs = -dst_cs;
+        rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);
+        rhs_cs = -rhs_cs;
     }
 
     if k == 0 {
@@ -120,13 +127,13 @@ unsafe fn gemm_basic_generic<
                                 for col in 0..n {
                                     let rhs = *rhs
                                         .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize * rhs_cs);
+                                        .wrapping_offset(col as isize);
 
                                     seq!(ROW in 0..$m {
                                         {
                                             let dst = dst
                                                 .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize * dst_cs);
+                                                .wrapping_offset(col as isize);
                                             *dst = alpha * *dst + beta * lhs~ROW * rhs;
                                         }
                                     });
@@ -140,13 +147,13 @@ unsafe fn gemm_basic_generic<
                                 for col in 0..n {
                                     let rhs = *rhs
                                         .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize * rhs_cs);
+                                        .wrapping_offset(col as isize);
 
                                     seq!(ROW in 0..$m {
                                         {
                                             let dst = dst
                                                 .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize * dst_cs);
+                                                .wrapping_offset(col as isize);
                                             *dst = beta * lhs~ROW * rhs;
                                         }
                                     });
@@ -161,13 +168,13 @@ unsafe fn gemm_basic_generic<
                             for col in 0..n {
                                 let rhs = *rhs
                                     .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
+                                    .wrapping_offset(col as isize);
 
                                 seq!(ROW in 0..$m {
                                     {
                                         let dst = dst
                                             .wrapping_offset(ROW as isize * dst_rs)
-                                            .wrapping_offset(col as isize * dst_cs);
+                                            .wrapping_offset(col as isize);
                                         *dst = *dst + beta * lhs~ROW * rhs;
                                     }
                                 });
