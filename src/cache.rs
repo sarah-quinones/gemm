@@ -141,7 +141,6 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 #[inline]
-#[track_caller]
 fn div_ceil(a: usize, b: usize) -> usize {
     let d = a / b;
     let r = a % b;
@@ -152,12 +151,11 @@ fn div_ceil(a: usize, b: usize) -> usize {
     }
 }
 #[inline]
-#[track_caller]
 fn round_down(a: usize, b: usize) -> usize {
     a / b * b
 }
 
-#[inline]
+#[inline(always)]
 pub fn kernel_params(
     m: usize,
     n: usize,
@@ -227,7 +225,7 @@ pub fn kernel_params(
         (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
     };
 
-    let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2), mr);
+    let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2 + 1), mr);
     let m_iter = div_ceil(m, auto_mc);
     let auto_mc = div_ceil(m, m_iter * mr) * mr;
 
