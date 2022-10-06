@@ -174,15 +174,15 @@ pub fn kernel_params(
 
     let info = *CACHE_INFO;
 
-    let l1_cache_bytes = info[0].cache_bytes;
+    let l1_cache_bytes = info[0].cache_bytes.max(1024);
     let l2_cache_bytes = info[1].cache_bytes;
     let l3_cache_bytes = info[2].cache_bytes;
 
-    let l1_line_bytes = info[0].cache_line_bytes;
+    let l1_line_bytes = info[0].cache_line_bytes.max(64);
 
-    let l1_assoc = info[0].associativity.max(3);
-    let l2_assoc = info[1].associativity.max(3);
-    let l3_assoc = info[2].associativity.max(3);
+    let l1_assoc = info[0].associativity.max(4);
+    let l2_assoc = info[1].associativity.max(4);
+    let l3_assoc = info[2].associativity.max(4);
 
     let l1_n_sets = l1_cache_bytes / (l1_line_bytes * l1_assoc);
 
@@ -217,30 +217,38 @@ pub fn kernel_params(
     //  - C update? 1 assoc degree
     //  - A macropanel: mc×kc
     // mc×kc×scalar_bytes
-    let rhs_micropanel_bytes = nr * auto_kc * sizeof;
-    let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
-    let lhs_l2_assoc = l2_assoc - 1 - rhs_l2_assoc;
+    let auto_mc = if l2_cache_bytes == 0 {
+        4 * mr
+    } else {
+        let rhs_micropanel_bytes = nr * auto_kc * sizeof;
+        let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
+        let lhs_l2_assoc = l2_assoc - 1 - rhs_l2_assoc;
 
-    let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
-        (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
+        let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
+            (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
+        };
+
+        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2 + 1), mr);
+        let m_iter = div_ceil(m, auto_mc);
+        div_ceil(m, m_iter * mr) * mr
     };
-
-    let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2 + 1), mr);
-    let m_iter = div_ceil(m, auto_mc);
-    let auto_mc = div_ceil(m, m_iter * mr) * mr;
 
     // l3 cache must hold
     //  - B macropanel: nc×kc
     //  - A macropanel: mc×kc
     //  - C update? 1 assoc degree
-    let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
-    let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
-    let rhs_l3_assoc = l3_assoc - 1 - lhs_l3_assoc;
-    let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
+    let auto_nc = if l3_cache_bytes == 0 {
+        256 * nr
+    } else {
+        let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
+        let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
+        let rhs_l3_assoc = l3_assoc - 1 - lhs_l3_assoc;
+        let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
 
-    let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);
-    let n_iter = div_ceil(n, auto_nc);
-    let auto_nc = div_ceil(n, n_iter * nr) * nr;
+        let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);
+        let n_iter = div_ceil(n, auto_nc);
+        div_ceil(n, n_iter * nr) * nr
+    };
 
     KernelParams {
         kc: auto_kc,
