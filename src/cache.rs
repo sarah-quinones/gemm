@@ -238,7 +238,7 @@ pub fn kernel_params(
     //  - A macropanel: mc×kc
     //  - C update? 1 assoc degree
     let auto_nc = if l3_cache_bytes == 0 {
-        256 * nr
+        128 * nr
     } else {
         let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
         let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
