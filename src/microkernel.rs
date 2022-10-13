@@ -13,6 +13,7 @@ macro_rules! microkernel {
             dst_rs: isize,
             lhs_cs: isize,
             rhs_rs: isize,
+            rhs_cs: isize,
             alpha: T,
             beta: T,
             read_dst: bool,
@@ -33,6 +34,7 @@ macro_rules! microkernel {
                 packed_rhs: *const T,
                 lhs_cs: isize,
                 rhs_rs: isize,
+                rhs_cs: isize,
                 accum: *mut Pack,
                 lhs: *mut ::core::mem::MaybeUninit<Pack>,
                 rhs: *mut ::core::mem::MaybeUninit<Pack>,
@@ -50,7 +52,7 @@ macro_rules! microkernel {
                     });
 
                     seq_macro::seq!(N_ITER in 0..$nr {
-                        (*self.rhs).write(splat(*packed_rhs.add(N_ITER)));
+                        (*self.rhs).write(splat(*packed_rhs.offset(N_ITER * self.rhs_cs)));
                         let accum = self.accum.add(N_ITER * $mr_div_n);
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let accum = &mut *accum.add(M_ITER);
@@ -76,6 +78,7 @@ macro_rules! microkernel {
                         packed_rhs,
                         lhs_cs,
                         rhs_rs,
+                        rhs_cs,
                         accum,
                         lhs: lhs.as_mut_ptr(),
                         rhs: &mut rhs,
@@ -103,6 +106,7 @@ macro_rules! microkernel {
                         packed_rhs,
                         lhs_cs,
                         rhs_rs,
+                        rhs_cs,
                         accum,
                         lhs: lhs.as_mut_ptr(),
                         rhs: &mut rhs,

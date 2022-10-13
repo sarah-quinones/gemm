@@ -62,6 +62,7 @@ unsafe fn gemm_basic_generic<
             isize,
             isize,
             isize,
+            isize,
             T,
             T,
             bool,
@@ -276,22 +277,21 @@ unsafe fn gemm_basic_generic<
     let packed_rhs_stride = div_ceil(kc * NR, simd_stride) * simd_stride;
     let packed_lhs_stride = div_ceil(kc * MR, simd_stride) * simd_stride;
 
-    let (mut packed_rhs_storage, mut stack) = stack.rb_mut().make_aligned_uninit::<T>(
-        packed_rhs_stride * (nc / NR).min(div_ceil(n, NR)),
-        simd_align,
-    );
+    let (mut packed_rhs_storage, mut stack) = stack
+        .rb_mut()
+        .make_aligned_uninit::<T>(packed_rhs_stride * (nc / NR), simd_align);
 
     let packed_rhs = packed_rhs_storage.as_mut_ptr() as *mut T;
 
-    let (mut packed_lhs_storage, _) = stack.rb_mut().make_aligned_uninit::<T>(
-        n_threads.get() * packed_lhs_stride * (mc / MR).min(div_ceil(m, MR)),
-        simd_align,
-    );
+    let (mut packed_lhs_storage, _) = stack
+        .rb_mut()
+        .make_aligned_uninit::<T>(n_threads.get() * packed_lhs_stride * (mc / MR), simd_align);
 
     let dst = Ptr(dst);
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
     let packed_rhs = Ptr(packed_rhs);
+    let do_pack_rhs = m > MR;
 
     let mut col_outer = 0;
     while col_outer != n {
@@ -301,15 +301,19 @@ unsafe fn gemm_basic_generic<
         while depth_outer != k {
             let k_chunk = kc.min(k - depth_outer);
 
-            pack_rhs::<T, NR>(
-                n_chunk,
-                k_chunk,
-                packed_rhs,
-                rhs.wrapping_offset(depth_outer as isize * rhs_rs + col_outer as isize * rhs_cs),
-                rhs_cs,
-                rhs_rs,
-                packed_rhs_stride,
-            );
+            if do_pack_rhs {
+                pack_rhs::<T, NR>(
+                    n_chunk,
+                    k_chunk,
+                    packed_rhs,
+                    rhs.wrapping_offset(
+                        depth_outer as isize * rhs_rs + col_outer as isize * rhs_cs,
+                    ),
+                    rhs_cs,
+                    rhs_rs,
+                    packed_rhs_stride,
+                );
+            }
 
             let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
             let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
@@ -400,11 +404,19 @@ unsafe fn gemm_basic_generic<
                                 k_chunk,
                                 dst,
                                 packed_lhs.wrapping_add(i * packed_lhs_stride),
-                                packed_rhs.wrapping_add(j * packed_rhs_stride),
+                                if do_pack_rhs {
+                                    packed_rhs.wrapping_add(j * packed_rhs_stride)
+                                } else {
+                                    rhs.wrapping_offset(
+                                        depth_outer as isize * rhs_rs
+                                            + (col_outer + col_inner) as isize * rhs_cs,
+                                    )
+                                },
                                 dst_cs,
                                 dst_rs,
                                 MR as isize,
-                                NR as isize,
+                                if do_pack_rhs { NR as isize } else { rhs_rs },
+                                if do_pack_rhs { 1 } else { rhs_cs },
                                 if depth_outer == 0 { alpha } else { T::one() },
                                 beta,
                                 if depth_outer == 0 { read_dst } else { true },
@@ -430,6 +442,7 @@ unsafe fn gemm_basic_generic<
     }
 }
 
+#[inline(always)]
 fn gemm_basic_req_generic<T>(
     mr: usize,
     nr: usize,
@@ -444,14 +457,9 @@ fn gemm_basic_req_generic<T>(
     let packed_rhs_stride = div_ceil(kc * nr, simd_stride) * simd_stride;
     let packed_lhs_stride = div_ceil(kc * mr, simd_stride) * simd_stride;
 
-    StackReq::try_new_aligned::<T>(
-        packed_rhs_stride * (nc / nr).min(div_ceil(n, nr)),
-        simd_align,
-    )?
-    .try_and(StackReq::try_new_aligned::<T>(
-        max_n_threads * packed_lhs_stride * (mc / mr).min(div_ceil(m, mr)),
-        simd_align,
-    )?)
+    StackReq::try_new_aligned::<T>(packed_rhs_stride * (nc / nr), simd_align)?.try_and(
+        StackReq::try_new_aligned::<T>(max_n_threads * packed_lhs_stride * (mc / mr), simd_align)?,
+    )
 }
 
 macro_rules! gemm_def {
