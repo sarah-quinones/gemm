@@ -72,10 +72,14 @@ mod tests {
         mnks.push((256, 256, 256));
         mnks.push((1024, 1024, 4));
         mnks.push((4096, 4096, 1));
-        mnks.push((63, 1, 1));
-        mnks.push((63, 2, 1));
-        mnks.push((63, 3, 1));
-        mnks.push((63, 4, 1));
+        mnks.push((63, 1, 10));
+        mnks.push((63, 2, 10));
+        mnks.push((63, 3, 10));
+        mnks.push((63, 4, 10));
+        mnks.push((1, 63, 10));
+        mnks.push((2, 63, 10));
+        mnks.push((3, 63, 10));
+        mnks.push((4, 63, 10));
 
         let n_threads = 1;
 

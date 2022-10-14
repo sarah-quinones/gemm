@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
 use gemm::{gemm, gemm_req};
@@ -5,12 +7,20 @@ use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
-    mnks.push((48, 48, 256));
-    mnks.push((52, 52, 256));
-    mnks.push((256, 256, 256));
-    mnks.push((256, 512, 256));
-    mnks.push((512, 256, 256));
-    mnks.push((1024, 1024, 1024));
+    // mnks.push((48, 48, 256));
+    // mnks.push((52, 52, 256));
+    // mnks.push((256, 256, 256));
+    // mnks.push((256, 512, 256));
+    // mnks.push((512, 256, 256));
+    // mnks.push((1024, 1024, 1024));
+    mnks.push((63, 1, 10));
+    mnks.push((63, 2, 10));
+    mnks.push((63, 3, 10));
+    mnks.push((63, 4, 10));
+    mnks.push((1, 63, 10));
+    mnks.push((2, 63, 10));
+    mnks.push((3, 63, 10));
+    mnks.push((4, 63, 10));
 
     for (m, n, k) in mnks {
         {
@@ -58,5 +68,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(
+    name = benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(2));
+    targets = criterion_benchmark
+);
 criterion_main!(benches);

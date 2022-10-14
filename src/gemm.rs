@@ -29,19 +29,19 @@ unsafe fn gemm_basic_generic<
     const MR: usize,
     const NR: usize,
 >(
-    m: usize,
-    n: usize,
+    mut m: usize,
+    mut n: usize,
     k: usize,
     mut dst: *mut T,
     mut dst_cs: isize,
     mut dst_rs: isize,
     read_dst: bool,
     mut lhs: *const T,
-    lhs_cs: isize,
+    mut lhs_cs: isize,
     mut lhs_rs: isize,
     mut rhs: *const T,
     mut rhs_cs: isize,
-    rhs_rs: isize,
+    mut rhs_rs: isize,
     alpha: T,
     beta: T,
     n_threads: usize,
@@ -87,7 +87,14 @@ unsafe fn gemm_basic_generic<
         rhs_cs = -rhs_cs;
     }
 
-    if k == 0 {
+    // gevm case => transpose
+    if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
+        (dst_rs, dst_cs) = (dst_cs, dst_rs);
+        (lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs) = (rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs);
+        (m, n) = (n, m);
+    }
+
+    let zero_dst = || {
         if read_dst {
             for col in 0..n {
                 for row in 0..m {
@@ -109,149 +116,42 @@ unsafe fn gemm_basic_generic<
                 }
             }
         }
+    };
+
+    if k == 0 {
+        zero_dst();
+        return;
     }
 
-    // n is greater than or equal to m, no need to handle gemv case directly
-    // gevm case
-    if m <= 4 {
+    // gemv case
+    if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
+        zero_dst();
         macro_rules! do_work {
-            ($m: tt) => {
-                if rhs_cs == 1 && dst_cs == 1 {
-                    for depth in 0..k {
-                        if depth == 0 {
-                            if read_dst {
-                                seq!(ROW in 0..$m {
-                                    let lhs~ROW = *lhs
-                                        .wrapping_offset(ROW as isize * lhs_rs)
-                                        .wrapping_offset(depth as isize * lhs_cs);
-                                });
-                                for col in 0..n {
-                                    let rhs = *rhs
-                                        .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize);
+            ($n: tt) => {
+                for depth in 0..k {
+                    seq!(COL in 0..$n {
+                        let rhs~COL = beta * *rhs
+                            .wrapping_offset(COL as isize * rhs_cs)
+                            .wrapping_offset(depth as isize * rhs_rs);
+                    });
+                    for row in 0..m {
+                        let lhs = *lhs
+                            .wrapping_offset(depth as isize * lhs_cs)
+                            .wrapping_offset(row as isize * lhs_rs);
 
-                                    seq!(ROW in 0..$m {
-                                        {
-                                            let dst = dst
-                                                .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize);
-                                            *dst = alpha * *dst + beta * lhs~ROW * rhs;
-                                        }
-                                    });
-                                }
-                            } else {
-                                seq!(ROW in 0..$m {
-                                    let lhs~ROW = *lhs
-                                        .wrapping_offset(ROW as isize * lhs_rs)
-                                        .wrapping_offset(depth as isize * lhs_cs);
-                                });
-                                for col in 0..n {
-                                    let rhs = *rhs
-                                        .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize);
-
-                                    seq!(ROW in 0..$m {
-                                        {
-                                            let dst = dst
-                                                .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize);
-                                            *dst = beta * lhs~ROW * rhs;
-                                        }
-                                    });
-                                }
+                        seq!(COL in 0..$n {
+                            {
+                                let dst = dst
+                                    .wrapping_offset(COL as isize * dst_cs)
+                                    .wrapping_offset(row as isize * dst_rs);
+                                *dst = *dst + rhs~COL * lhs;
                             }
-                        } else {
-                            seq!(ROW in 0..$m {
-                                let lhs~ROW = *lhs
-                                    .wrapping_offset(ROW as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                            });
-                            for col in 0..n {
-                                let rhs = *rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize);
-
-                                seq!(ROW in 0..$m {
-                                    {
-                                        let dst = dst
-                                            .wrapping_offset(ROW as isize * dst_rs)
-                                            .wrapping_offset(col as isize);
-                                        *dst = *dst + beta * lhs~ROW * rhs;
-                                    }
-                                });
-                            }
-                        }
-                    }
-                } else {
-                    for depth in 0..k {
-                        if depth == 0 {
-                            if read_dst {
-                                seq!(ROW in 0..$m {
-                                    let lhs~ROW = *lhs
-                                        .wrapping_offset(ROW as isize * lhs_rs)
-                                        .wrapping_offset(depth as isize * lhs_cs);
-                                });
-                                for col in 0..n {
-                                    let rhs = *rhs
-                                        .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize * rhs_cs);
-
-                                    seq!(ROW in 0..$m {
-                                        {
-                                            let dst = dst
-                                                .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize * dst_cs);
-                                            *dst = alpha * *dst + beta * lhs~ROW * rhs;
-                                        }
-                                    });
-                                }
-                            } else {
-                                seq!(ROW in 0..$m {
-                                    let lhs~ROW = *lhs
-                                        .wrapping_offset(ROW as isize * lhs_rs)
-                                        .wrapping_offset(depth as isize * lhs_cs);
-                                });
-                                for col in 0..n {
-                                    let rhs = *rhs
-                                        .wrapping_offset(depth as isize * rhs_rs)
-                                        .wrapping_offset(col as isize * rhs_cs);
-
-                                    seq!(ROW in 0..$m {
-                                        {
-                                            let dst = dst
-                                                .wrapping_offset(ROW as isize * dst_rs)
-                                                .wrapping_offset(col as isize * dst_cs);
-                                            *dst = beta * lhs~ROW * rhs;
-                                        }
-                                    });
-                                }
-                            }
-                        } else {
-                            seq!(ROW in 0..$m {
-                                let lhs~ROW = *lhs
-                                    .wrapping_offset(ROW as isize * lhs_rs)
-                                    .wrapping_offset(depth as isize * lhs_cs);
-                            });
-                            for col in 0..n {
-                                let rhs = *rhs
-                                    .wrapping_offset(depth as isize * rhs_rs)
-                                    .wrapping_offset(col as isize * rhs_cs);
-
-                                seq!(ROW in 0..$m {
-                                    {
-                                        let dst = dst
-                                            .wrapping_offset(ROW as isize * dst_rs)
-                                            .wrapping_offset(col as isize * dst_cs);
-                                        *dst = *dst + beta * lhs~ROW * rhs;
-                                    }
-                                });
-                            }
-                        }
+                        });
                     }
                 }
-            };
+            }
         }
-        match m {
+        match n {
             1 => do_work!(1),
             2 => do_work!(2),
             3 => do_work!(3),
@@ -269,6 +169,7 @@ unsafe fn gemm_basic_generic<
     } else {
         n_threads
     };
+
     let n_threads = StrengthReducedUsize::new(n_threads);
 
     let simd_align = CACHELINE_ALIGN;
@@ -524,11 +425,10 @@ macro_rules! gemm_def {
             k: usize,
             max_n_threads: usize,
         ) -> Result<StackReq, SizeOverflow> {
-            if m > n {
-                (GEMM.1)(n, m, k, max_n_threads)
-            } else {
-                (GEMM.1)(m, n, k, max_n_threads)
-            }
+            StackReq::try_any_of([
+                (GEMM.1)(n, m, k, max_n_threads)?,
+                (GEMM.1)(m, n, k, max_n_threads)?,
+            ])
         }
 
         #[inline]
@@ -551,7 +451,8 @@ macro_rules! gemm_def {
             n_threads: usize,
             stack: DynStack<'_>,
         ) {
-            if m > n {
+            let do_transpose = dst_cs < dst_rs;
+            if do_transpose {
                 (GEMM.0)(
                     n, m, k, dst, dst_rs, dst_cs, read_dst, rhs, rhs_rs, rhs_cs, lhs, lhs_rs,
                     lhs_cs, alpha, beta, n_threads, stack,

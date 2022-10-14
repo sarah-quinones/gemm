@@ -794,7 +794,6 @@ pub mod avx512f {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
-        use core::mem::MaybeUninit;
 
         type T = f64;
         const N: usize = 8;
@@ -802,20 +801,37 @@ pub mod avx512f {
 
         #[inline(always)]
         unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..8 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
+            transmute(_mm512_i64gather_pd::<8>(
+                _mm512_setr_epi64(
+                    0 * stride as i64,
+                    1 * stride as i64,
+                    2 * stride as i64,
+                    3 * stride as i64,
+                    4 * stride as i64,
+                    5 * stride as i64,
+                    6 * stride as i64,
+                    7 * stride as i64,
+                ),
+                base as _,
+            ))
         }
 
         #[inline(always)]
         unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..8 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
+            _mm512_i64scatter_pd::<8>(
+                base as _,
+                _mm512_setr_epi64(
+                    0 * stride as i64,
+                    1 * stride as i64,
+                    2 * stride as i64,
+                    3 * stride as i64,
+                    4 * stride as i64,
+                    5 * stride as i64,
+                    6 * stride as i64,
+                    7 * stride as i64,
+                ),
+                transmute(p),
+            );
         }
 
         #[inline(always)]
