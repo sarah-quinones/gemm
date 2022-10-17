@@ -22,6 +22,9 @@ fn div_ceil(a: usize, b: usize) -> usize {
     }
 }
 
+type MicroKernelFn<T> =
+    unsafe fn(usize, usize, usize, Ptr<T>, Ptr<T>, Ptr<T>, isize, isize, isize, isize, isize, T, T);
+
 #[inline(always)]
 unsafe fn gemm_basic_generic<
     T: Copy
@@ -35,6 +38,7 @@ unsafe fn gemm_basic_generic<
     const N: usize,
     const MR: usize,
     const NR: usize,
+    const MR_DIV_N: usize,
 >(
     mut m: usize,
     mut n: usize,
@@ -49,32 +53,13 @@ unsafe fn gemm_basic_generic<
     mut rhs: *const T,
     mut rhs_cs: isize,
     mut rhs_rs: isize,
-    alpha: T,
+    mut alpha: T,
     beta: T,
     n_threads: usize,
     mul_add: impl Fn(T, T, T) -> T,
-    dispatcher: impl Copy
-        + Send
-        + Sync
-        + Fn(
-            usize,
-            usize,
-        ) -> unsafe fn(
-            usize,
-            usize,
-            usize,
-            Ptr<T>,
-            Ptr<T>,
-            Ptr<T>,
-            isize,
-            isize,
-            isize,
-            isize,
-            isize,
-            T,
-            T,
-            bool,
-        ),
+    dispatcher_zero: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher_one: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher_generic: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
     mut stack: DynStack<'_>,
 ) {
     if m == 0 || n == 0 {
@@ -244,14 +229,28 @@ unsafe fn gemm_basic_generic<
     let rhs = Ptr(rhs as *mut T);
     let packed_rhs = Ptr(packed_rhs);
     let do_pack_rhs = m > MR;
+    let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
+    let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
 
     let mut col_outer = 0;
+    if !read_dst {
+        alpha = T::zero();
+    }
     while col_outer != n {
         let n_chunk = nc.min(n - col_outer);
+
+        let mut alpha = alpha;
 
         let mut depth_outer = 0;
         while depth_outer != k {
             let k_chunk = kc.min(k - depth_outer);
+            let dispatcher = if alpha.is_zero() {
+                dispatcher_zero
+            } else if alpha.is_one() {
+                dispatcher_one
+            } else {
+                dispatcher_generic
+            };
 
             if do_pack_rhs {
                 pack_rhs::<T, NR>(
@@ -347,8 +346,8 @@ unsafe fn gemm_basic_generic<
                                     + (col_outer + col_inner) as isize * dst_cs,
                             );
 
-                            let dispatcher = dispatcher;
-                            let func = dispatcher((m_chunk_inner + (N - 1)) / N, n_chunk_inner);
+                            let func =
+                                dispatcher[(m_chunk_inner + (N - 1)) / N - 1][n_chunk_inner - 1];
 
                             func(
                                 m_chunk_inner,
@@ -367,11 +366,10 @@ unsafe fn gemm_basic_generic<
                                 dst_cs,
                                 dst_rs,
                                 MR as isize,
-                                if do_pack_rhs { NR as isize } else { rhs_rs },
-                                if do_pack_rhs { 1 } else { rhs_cs },
-                                if depth_outer == 0 { alpha } else { T::one() },
+                                packed_rhs_rs,
+                                packed_rhs_cs,
+                                alpha,
                                 beta,
-                                if depth_outer == 0 { read_dst } else { true },
                             );
                             i += 1;
                         }
@@ -388,6 +386,8 @@ unsafe fn gemm_basic_generic<
                 use rayon::prelude::*;
                 (0..n_threads.get()).into_par_iter().for_each(func);
             }
+            alpha = T::one();
+
             depth_outer += k_chunk;
         }
         col_outer += n_chunk;
@@ -552,7 +552,7 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::scalar::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
                     m,
                     n,
                     k,
@@ -570,19 +570,18 @@ macro_rules! gemm_def {
                     beta,
                     n_threads,
                     |a, b, c| a * b + c,
-                    |mr_div_n, nr| match (mr_div_n, nr) {
-                        (1, 1) => x1x1,
-                        (1, 2) => x1x2,
-                        (1, 3) => x1x3,
-                        (1, 4) => x1x4,
-
-                        (2, 1) => x2x1,
-                        (2, 2) => x2x2,
-                        (2, 3) => x2x3,
-                        (2, 4) => x2x4,
-
-                        _ => unreachable!(),
-                    },
+                    &[
+                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
+                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
+                    ],
+                    &[
+                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
+                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
+                    ],
+                    &[
+                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
+                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
+                    ],
                     stack,
                 );
             }
@@ -626,7 +625,7 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::sse::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
                     m,
                     n,
                     k,
@@ -644,19 +643,18 @@ macro_rules! gemm_def {
                     beta,
                     n_threads,
                     |a, b, c| a * b + c,
-                    |mr_div_n, nr| match (mr_div_n, nr) {
-                        (1, 1) => x1x1,
-                        (1, 2) => x1x2,
-                        (1, 3) => x1x3,
-                        (1, 4) => x1x4,
-
-                        (2, 1) => x2x1,
-                        (2, 2) => x2x2,
-                        (2, 3) => x2x3,
-                        (2, 4) => x2x4,
-
-                        _ => unreachable!(),
-                    },
+                    &[
+                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
+                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
+                    ],
+                    &[
+                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
+                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
+                    ],
+                    &[
+                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
+                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
+                    ],
                     stack,
                 );
             }
@@ -700,7 +698,7 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::avx::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
                     m,
                     n,
                     k,
@@ -718,19 +716,18 @@ macro_rules! gemm_def {
                     beta,
                     n_threads,
                     |a, b, c| a * b + c,
-                    |mr_div_n, nr| match (mr_div_n, nr) {
-                        (1, 1) => x1x1,
-                        (1, 2) => x1x2,
-                        (1, 3) => x1x3,
-                        (1, 4) => x1x4,
-
-                        (2, 1) => x2x1,
-                        (2, 2) => x2x2,
-                        (2, 3) => x2x3,
-                        (2, 4) => x2x4,
-
-                        _ => unreachable!(),
-                    },
+                    &[
+                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
+                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
+                    ],
+                    &[
+                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
+                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
+                    ],
+                    &[
+                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
+                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
+                    ],
                     stack,
                 );
             }
@@ -774,7 +771,7 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::fma::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
                     m,
                     n,
                     k,
@@ -792,24 +789,21 @@ macro_rules! gemm_def {
                     beta,
                     n_threads,
                     <$ty>::mul_add,
-                    |mr_div_n, nr| match (mr_div_n, nr) {
-                        (1, 1) => x1x1,
-                        (1, 2) => x1x2,
-                        (1, 3) => x1x3,
-                        (1, 4) => x1x4,
-
-                        (2, 1) => x2x1,
-                        (2, 2) => x2x2,
-                        (2, 3) => x2x3,
-                        (2, 4) => x2x4,
-
-                        (3, 1) => x3x1,
-                        (3, 2) => x3x2,
-                        (3, 3) => x3x3,
-                        (3, 4) => x3x4,
-
-                        _ => unreachable!(),
-                    },
+                    &[
+                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
+                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
+                        [x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>],
+                    ],
+                    &[
+                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
+                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
+                        [x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>],
+                    ],
+                    &[
+                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
+                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
+                        [x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>],
+                    ],
                     stack,
                 );
             }
@@ -853,7 +847,7 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::avx512f::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR>(
+                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
                     m,
                     n,
                     k,
@@ -871,36 +865,48 @@ macro_rules! gemm_def {
                     beta,
                     n_threads,
                     <$ty>::mul_add,
-                    |mr_div_n, nr| match (mr_div_n, nr) {
-                        (1, 1) => x1x1,
-                        (1, 2) => x1x2,
-                        (1, 3) => x1x3,
-                        (1, 4) => x1x4,
-                        (1, 5) => x1x5,
-                        (1, 6) => x1x6,
-                        (1, 7) => x1x7,
-                        (1, 8) => x1x8,
-
-                        (2, 1) => x2x1,
-                        (2, 2) => x2x2,
-                        (2, 3) => x2x3,
-                        (2, 4) => x2x4,
-                        (2, 5) => x2x5,
-                        (2, 6) => x2x6,
-                        (2, 7) => x2x7,
-                        (2, 8) => x2x8,
-
-                        (3, 1) => x3x1,
-                        (3, 2) => x3x2,
-                        (3, 3) => x3x3,
-                        (3, 4) => x3x4,
-                        (3, 5) => x3x5,
-                        (3, 6) => x3x6,
-                        (3, 7) => x3x7,
-                        (3, 8) => x3x8,
-
-                        _ => unreachable!(),
-                    },
+                    &[
+                        [
+                            x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>, x1x5::<0>, x1x6::<0>,
+                            x1x7::<0>, x1x8::<0>,
+                        ],
+                        [
+                            x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>, x2x5::<0>, x2x6::<0>,
+                            x2x7::<0>, x2x8::<0>,
+                        ],
+                        [
+                            x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>, x3x5::<0>, x3x6::<0>,
+                            x3x7::<0>, x3x8::<0>,
+                        ],
+                    ],
+                    &[
+                        [
+                            x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>, x1x5::<1>, x1x6::<1>,
+                            x1x7::<1>, x1x8::<1>,
+                        ],
+                        [
+                            x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>, x2x5::<1>, x2x6::<1>,
+                            x2x7::<1>, x2x8::<1>,
+                        ],
+                        [
+                            x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>, x3x5::<1>, x3x6::<1>,
+                            x3x7::<1>, x3x8::<1>,
+                        ],
+                    ],
+                    &[
+                        [
+                            x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>, x1x5::<2>, x1x6::<2>,
+                            x1x7::<2>, x1x8::<2>,
+                        ],
+                        [
+                            x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>, x2x5::<2>, x2x6::<2>,
+                            x2x7::<2>, x2x8::<2>,
+                        ],
+                        [
+                            x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>, x3x5::<2>, x3x6::<2>,
+                            x3x7::<2>, x3x8::<2>,
+                        ],
+                    ],
                     stack,
                 );
             }

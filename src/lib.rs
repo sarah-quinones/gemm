@@ -71,7 +71,7 @@ mod tests {
         mnks.push((4, 4, 4));
         mnks.push((256, 256, 256));
         mnks.push((1024, 1024, 4));
-        mnks.push((4096, 4096, 1));
+        mnks.push((1024, 1024, 1));
         mnks.push((63, 1, 10));
         mnks.push((63, 2, 10));
         mnks.push((63, 3, 10));
@@ -84,56 +84,61 @@ mod tests {
         let n_threads = 1;
 
         for (m, n, k) in mnks {
-            let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
-            let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
-            let mut c_vec = vec![0.0; m * n];
-            let mut d_vec = vec![0.0; m * n];
+            for alpha in [0.0, 1.0, 2.3] {
+                for beta in [0.0, 1.0, 2.3] {
+                    let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
+                    let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
+                    let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();
+                    let mut d_vec = c_vec.clone();
 
-            let mut mem = GlobalMemBuffer::new(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
-            let mut stack = DynStack::new(&mut mem);
-            unsafe {
-                gemm::gemm(
-                    m,
-                    n,
-                    k,
-                    c_vec.as_mut_ptr(),
-                    m as isize,
-                    1,
-                    true,
-                    a_vec.as_ptr(),
-                    m as isize,
-                    1,
-                    b_vec.as_ptr(),
-                    k as isize,
-                    1,
-                    0.0,
-                    1.0,
-                    n_threads,
-                    stack.rb_mut(),
-                );
+                    let mut mem =
+                        GlobalMemBuffer::new(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
+                    let mut stack = DynStack::new(&mut mem);
+                    unsafe {
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
+                            c_vec.as_mut_ptr(),
+                            m as isize,
+                            1,
+                            true,
+                            a_vec.as_ptr(),
+                            m as isize,
+                            1,
+                            b_vec.as_ptr(),
+                            k as isize,
+                            1,
+                            alpha,
+                            beta,
+                            n_threads,
+                            stack.rb_mut(),
+                        );
 
-                gemm::gemm_fallback(
-                    m,
-                    n,
-                    k,
-                    d_vec.as_mut_ptr(),
-                    m as isize,
-                    1,
-                    true,
-                    a_vec.as_ptr(),
-                    m as isize,
-                    1,
-                    b_vec.as_ptr(),
-                    k as isize,
-                    1,
-                    0.0,
-                    1.0,
-                    n_threads,
-                    stack.rb_mut(),
-                );
-            }
-            for (c, d) in c_vec.iter().zip(d_vec.iter()) {
-                assert_approx_eq::assert_approx_eq!(c, d);
+                        gemm::gemm_fallback(
+                            m,
+                            n,
+                            k,
+                            d_vec.as_mut_ptr(),
+                            m as isize,
+                            1,
+                            true,
+                            a_vec.as_ptr(),
+                            m as isize,
+                            1,
+                            b_vec.as_ptr(),
+                            k as isize,
+                            1,
+                            alpha,
+                            beta,
+                            n_threads,
+                            stack.rb_mut(),
+                        );
+                    }
+                    for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                        assert_approx_eq::assert_approx_eq!(c, d);
+                    }
+                }
             }
         }
     }

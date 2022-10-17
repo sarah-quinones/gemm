@@ -2,7 +2,8 @@ macro_rules! microkernel {
     ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
-        pub(crate) unsafe fn $name(
+        // 0, 1, or 2 for generic alpha
+        pub(crate) unsafe fn $name<const ALPHA: u8>(
             m: usize,
             n: usize,
             k: usize,
@@ -16,8 +17,9 @@ macro_rules! microkernel {
             rhs_cs: isize,
             alpha: T,
             beta: T,
-            read_dst: bool,
         ) {
+            assert!(ALPHA <= 2);
+
             let dst = dst.0;
             let mut packed_lhs = packed_lhs.0;
             let mut packed_rhs = packed_rhs.0;
@@ -124,17 +126,28 @@ macro_rules! microkernel {
             }
 
             if m == $mr_div_n * N && n == $nr {
+                let alpha = splat(alpha);
                 let beta = splat(beta);
                 if dst_rs == 1 {
 
-                    if read_dst {
-                        let alpha = splat(alpha);
+                    if ALPHA == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
                                 dst.write_unaligned(add(
                                     mul(alpha, dst.read_unaligned()),
                                     mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                ));
+                            }});
+                        });
+                    } else if ALPHA == 1 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                dst.write_unaligned(mul_add(
+                                    beta,
+                                    *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                    dst.read_unaligned(),
                                 ));
                             }});
                         });
@@ -147,8 +160,7 @@ macro_rules! microkernel {
                         });
                     }
                 } else {
-                    if read_dst {
-                        let alpha = splat(alpha);
+                    if ALPHA == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
@@ -158,6 +170,21 @@ macro_rules! microkernel {
                                     add(
                                         mul(alpha, gather(dst, dst_rs)),
                                         mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                    ),
+                                );
+                            }});
+                        });
+                    } else if ALPHA == 1 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                                scatter(
+                                    dst,
+                                    dst_rs,
+                                    mul_add(
+                                        beta,
+                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                        gather(dst, dst_rs),
                                     ),
                                 );
                             }});
@@ -179,7 +206,7 @@ macro_rules! microkernel {
                 let src = accum_storage; // write to stack
                 let src = src.as_ptr() as *const T;
 
-                if read_dst {
+                if ALPHA == 2 {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
                         let src_j = src.add(j * $mr_div_n * N);
@@ -189,6 +216,18 @@ macro_rules! microkernel {
                             let src_ij = src_j.add(i);
 
                             *dst_ij = alpha * *dst_ij + beta * *src_ij;
+                        }
+                    }
+                } else if ALPHA == 1 {
+                    for j in 0..n {
+                        let dst_j = dst.offset(dst_cs * j as isize);
+                        let src_j = src.add(j * $mr_div_n * N);
+
+                        for i in 0..m {
+                            let dst_ij = dst_j.offset(dst_rs * i as isize);
+                            let src_ij = src_j.add(i);
+
+                            *dst_ij = *dst_ij + beta * *src_ij;
                         }
                     }
                 } else {
