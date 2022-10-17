@@ -7,12 +7,12 @@ use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
-    // mnks.push((48, 48, 256));
-    // mnks.push((52, 52, 256));
-    // mnks.push((256, 256, 256));
-    // mnks.push((256, 512, 256));
-    // mnks.push((512, 256, 256));
-    // mnks.push((1024, 1024, 1024));
+    mnks.push((48, 48, 256));
+    mnks.push((52, 52, 256));
+    mnks.push((256, 256, 256));
+    mnks.push((256, 512, 256));
+    mnks.push((512, 256, 256));
+    mnks.push((1024, 1024, 1024));
     mnks.push((63, 1, 10));
     mnks.push((63, 2, 10));
     mnks.push((63, 3, 10));

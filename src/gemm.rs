@@ -24,7 +24,14 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[inline(always)]
 unsafe fn gemm_basic_generic<
-    T: Copy + Zero + One + Send + Sync + core::ops::Add<Output = T> + core::ops::Mul<Output = T>,
+    T: Copy
+        + Zero
+        + One
+        + Send
+        + Sync
+        + core::ops::Add<Output = T>
+        + core::ops::Mul<Output = T>
+        + core::cmp::PartialEq,
     const N: usize,
     const MR: usize,
     const NR: usize,
@@ -45,6 +52,7 @@ unsafe fn gemm_basic_generic<
     alpha: T,
     beta: T,
     n_threads: usize,
+    mul_add: impl Fn(T, T, T) -> T,
     dispatcher: impl Copy
         + Send
         + Sync
@@ -157,6 +165,49 @@ unsafe fn gemm_basic_generic<
             3 => do_work!(3),
             4 => do_work!(4),
             _ => (),
+        }
+        return;
+    }
+
+    if k == 1 {
+        if read_dst {
+            if alpha == T::one() {
+                for col in 0..n {
+                    let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
+                    for row in 0..m {
+                        let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
+                        let dst = dst
+                            .wrapping_offset(row as isize * dst_rs)
+                            .wrapping_offset(col as isize * dst_cs);
+
+                        *dst = mul_add(lhs, rhs, *dst);
+                    }
+                }
+            } else {
+                for col in 0..n {
+                    let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
+                    for row in 0..m {
+                        let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
+                        let dst = dst
+                            .wrapping_offset(row as isize * dst_rs)
+                            .wrapping_offset(col as isize * dst_cs);
+
+                        *dst = alpha * *dst + lhs * rhs;
+                    }
+                }
+            }
+        } else {
+            for col in 0..n {
+                let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
+                for row in 0..m {
+                    let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
+                    let dst = dst
+                        .wrapping_offset(row as isize * dst_rs)
+                        .wrapping_offset(col as isize * dst_cs);
+
+                    *dst = lhs * rhs;
+                }
+            }
         }
         return;
     }
@@ -518,6 +569,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
+                    |a, b, c| a * b + c,
                     |mr_div_n, nr| match (mr_div_n, nr) {
                         (1, 1) => x1x1,
                         (1, 2) => x1x2,
@@ -591,6 +643,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
+                    |a, b, c| a * b + c,
                     |mr_div_n, nr| match (mr_div_n, nr) {
                         (1, 1) => x1x1,
                         (1, 2) => x1x2,
@@ -664,6 +717,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
+                    |a, b, c| a * b + c,
                     |mr_div_n, nr| match (mr_div_n, nr) {
                         (1, 1) => x1x1,
                         (1, 2) => x1x2,
@@ -737,6 +791,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
+                    <$ty>::mul_add,
                     |mr_div_n, nr| match (mr_div_n, nr) {
                         (1, 1) => x1x1,
                         (1, 2) => x1x2,
@@ -815,6 +870,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
+                    <$ty>::mul_add,
                     |mr_div_n, nr| match (mr_div_n, nr) {
                         (1, 1) => x1x1,
                         (1, 2) => x1x2,
