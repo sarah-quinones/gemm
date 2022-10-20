@@ -16,7 +16,6 @@ raw-cpuid = "10.3"
 seq-macro = "0.3"
 dyn-stack = "0.8"
 num-traits = "0.2"
-strength_reduce = "0.2"
 aligned-vec = "0.5"
 
 [features]
