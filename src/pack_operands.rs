@@ -1,3 +1,5 @@
+use crate::simd::Simd;
+
 #[inline(always)]
 unsafe fn pack_generic_inner_loop<T: Copy, const DST_WIDTH: usize>(
     mut dst: *mut T,
@@ -64,8 +66,9 @@ unsafe fn pack_generic<T: Copy, const DST_WIDTH: usize>(
     }
 }
 
-#[inline(always)]
-pub(crate) unsafe fn pack_lhs<T: Copy, const MR: usize>(
+#[inline(never)]
+pub(crate) unsafe fn pack_lhs<T: Copy, const MR: usize, S: Simd>(
+    _: S,
     m: usize,
     k: usize,
     dst: crate::Ptr<T>,
@@ -76,11 +79,15 @@ pub(crate) unsafe fn pack_lhs<T: Copy, const MR: usize>(
 ) {
     let dst = dst.0;
     let src = src.0;
-    pack_generic::<T, MR>(m, k, dst, src, src_cs, src_rs, dst_stride);
+    S::vectorize(
+        #[inline(always)]
+        || pack_generic::<T, MR>(m, k, dst, src, src_cs, src_rs, dst_stride),
+    );
 }
 
-#[inline(always)]
-pub(crate) unsafe fn pack_rhs<T: Copy, const NR: usize>(
+#[inline(never)]
+pub(crate) unsafe fn pack_rhs<T: Copy, const NR: usize, S: Simd>(
+    _: S,
     n: usize,
     k: usize,
     dst: crate::Ptr<T>,
@@ -89,5 +96,10 @@ pub(crate) unsafe fn pack_rhs<T: Copy, const NR: usize>(
     src_rs: isize,
     dst_stride: usize,
 ) {
-    pack_lhs::<T, NR>(n, k, dst, src, src_rs, src_cs, dst_stride);
+    let dst = dst.0;
+    let src = src.0;
+    S::vectorize(
+        #[inline(always)]
+        || pack_generic::<T, NR>(n, k, dst, src, src_rs, src_cs, dst_stride),
+    );
 }

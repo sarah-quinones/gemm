@@ -3,6 +3,7 @@ use crate::{
     gemv, gevv,
     microkernel::{self, MicroKernelFn},
     pack_operands::{pack_lhs, pack_rhs},
+    simd::Simd,
     x86_feature_detected, Ptr,
 };
 use aligned_vec::CACHELINE_ALIGN;
@@ -23,6 +24,7 @@ fn div_ceil(a: usize, b: usize) -> usize {
 
 #[inline(always)]
 unsafe fn gemm_basic_generic<
+    S: Simd,
     T: Copy
         + Zero
         + One
@@ -37,6 +39,7 @@ unsafe fn gemm_basic_generic<
     const NR: usize,
     const MR_DIV_N: usize,
 >(
+    simd: S,
     m: usize,
     n: usize,
     k: usize,
@@ -82,22 +85,22 @@ unsafe fn gemm_basic_generic<
 
     if k <= 2 {
         gevv::gevv(
-            m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha, beta,
-            mul_add, stack,
+            simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
+            beta, mul_add, stack,
         );
         return;
     }
     if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
         gemv::gemv(
-            n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha, beta,
-            mul_add, stack,
+            simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha,
+            beta, mul_add, stack,
         );
         return;
     }
     if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
         gemv::gemv(
-            m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha, beta,
-            mul_add, stack,
+            simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
+            beta, mul_add, stack,
         );
         return;
     }
@@ -133,7 +136,7 @@ unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
     let packed_rhs = Ptr(packed_rhs);
-    let do_pack_rhs = m > MR && rhs_rs.abs() != 1;
+    let do_pack_rhs = false;
 
     let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
@@ -156,7 +159,8 @@ unsafe fn gemm_basic_generic<
             };
 
             if do_pack_rhs {
-                pack_rhs::<T, NR>(
+                pack_rhs::<T, NR, _>(
+                    simd,
                     n_chunk,
                     k_chunk,
                     packed_rhs,
@@ -222,11 +226,12 @@ unsafe fn gemm_basic_generic<
                         continue;
                     }
 
-                    let do_pack_lhs = (m_chunk % (MR / N) != 0) || lhs_rs != 1 || n > 16;
+                    let do_pack_lhs = (m_chunk % (MR / N) != 0) || lhs_rs != 1 || n > 2 * NR;
                     let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                     if do_pack_lhs {
-                        pack_lhs::<T, MR>(
+                        pack_lhs::<T, MR, _>(
+                            simd,
                             m_chunk,
                             k_chunk,
                             packed_lhs,
@@ -473,7 +478,8 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::scalar::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Scalar,
                     m,
                     n,
                     k,
@@ -546,7 +552,8 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::sse::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Sse,
                     m,
                     n,
                     k,
@@ -619,7 +626,8 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::avx::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Avx,
                     m,
                     n,
                     k,
@@ -692,7 +700,8 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::fma::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Fma,
                     m,
                     n,
                     k,
@@ -768,7 +777,8 @@ macro_rules! gemm_def {
                 stack: DynStack<'_>,
             ) {
                 use microkernel::avx512f::$ty::*;
-                gemm_basic_generic::<T, N, MR, NR, { MR / N }>(
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Avx512f,
                     m,
                     n,
                     k,
