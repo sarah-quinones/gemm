@@ -22,6 +22,8 @@ mod x86 {
     pub struct Avx;
     #[derive(Copy, Clone)]
     pub struct Fma;
+
+    #[cfg(feature = "nightly")]
     #[derive(Copy, Clone)]
     pub struct Avx512f;
 
@@ -49,6 +51,7 @@ mod x86 {
         }
     }
 
+    #[cfg(feature = "nightly")]
     impl Simd for Avx512f {
         #[inline]
         #[target_feature(enable = "avx512f")]
