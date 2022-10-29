@@ -7,6 +7,8 @@ use nalgebra::DMatrix;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
+    mnks.push((896, 128, 128));
+    mnks.push((256, 32, 256));
     mnks.push((48, 48, 256));
     mnks.push((52, 52, 256));
     mnks.push((256, 256, 256));
@@ -32,29 +34,41 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
             let mut mem = GlobalMemBuffer::new(gemm_req::<f64>(m, n, k, n_threads).unwrap());
             let mut stack = DynStack::new(&mut mem);
-            c.bench_function(&format!("gemm-{}×{}×{}", m, n, k), |b| {
-                b.iter(|| unsafe {
-                    gemm(
-                        m,
-                        n,
-                        k,
-                        c_vec.as_mut_ptr(),
-                        m as isize,
-                        1,
-                        true,
-                        a_vec.as_ptr(),
-                        m as isize,
-                        1,
-                        b_vec.as_ptr(),
-                        k as isize,
-                        1,
-                        0.0,
-                        0.0,
-                        n_threads,
-                        stack.rb_mut(),
-                    )
-                })
-            });
+            for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
+                for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
+                    for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
+                        c.bench_function(
+                            &format!(
+                                "{}{}{}-gemm-{}×{}×{}",
+                                dst_label, lhs_label, rhs_label, m, n, k
+                            ),
+                            |b| {
+                                b.iter(|| unsafe {
+                                    gemm(
+                                        m,
+                                        n,
+                                        k,
+                                        c_vec.as_mut_ptr(),
+                                        dst_cs as isize,
+                                        dst_rs as isize,
+                                        true,
+                                        a_vec.as_ptr(),
+                                        lhs_cs as isize,
+                                        lhs_rs as isize,
+                                        b_vec.as_ptr(),
+                                        rhs_cs as isize,
+                                        rhs_rs as isize,
+                                        0.0,
+                                        0.0,
+                                        n_threads,
+                                        stack.rb_mut(),
+                                    )
+                                })
+                            },
+                        );
+                    }
+                }
+            }
         }
 
         {
