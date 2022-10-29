@@ -1,6 +1,7 @@
 use crate::{
     cache::{kernel_params, KernelParams},
-    microkernel,
+    gemv, gevv,
+    microkernel::{self, MicroKernelFn},
     pack_operands::{pack_lhs, pack_rhs},
     x86_feature_detected, Ptr,
 };
@@ -8,7 +9,6 @@ use aligned_vec::CACHELINE_ALIGN;
 use core::any::TypeId;
 use dyn_stack::{DynStack, ReborrowMut, SizeOverflow, StackReq};
 use num_traits::{One, Zero};
-use seq_macro::seq;
 
 #[inline(always)]
 fn div_ceil(a: usize, b: usize) -> usize {
@@ -21,9 +21,6 @@ fn div_ceil(a: usize, b: usize) -> usize {
     }
 }
 
-type MicroKernelFn<T> =
-    unsafe fn(usize, usize, usize, Ptr<T>, Ptr<T>, Ptr<T>, isize, isize, isize, isize, isize, T, T);
-
 #[inline(always)]
 unsafe fn gemm_basic_generic<
     T: Copy
@@ -31,6 +28,7 @@ unsafe fn gemm_basic_generic<
         + One
         + Send
         + Sync
+        + core::fmt::Debug
         + core::ops::Add<Output = T>
         + core::ops::Mul<Output = T>
         + core::cmp::PartialEq,
@@ -39,23 +37,23 @@ unsafe fn gemm_basic_generic<
     const NR: usize,
     const MR_DIV_N: usize,
 >(
-    mut m: usize,
-    mut n: usize,
+    m: usize,
+    n: usize,
     k: usize,
     mut dst: *mut T,
     mut dst_cs: isize,
     mut dst_rs: isize,
     read_dst: bool,
     mut lhs: *const T,
-    mut lhs_cs: isize,
+    lhs_cs: isize,
     mut lhs_rs: isize,
     mut rhs: *const T,
     mut rhs_cs: isize,
-    mut rhs_rs: isize,
+    rhs_rs: isize,
     mut alpha: T,
     beta: T,
     n_threads: usize,
-    mul_add: impl Fn(T, T, T) -> T,
+    mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher_zero: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
     dispatcher_one: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
     dispatcher_generic: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
@@ -63,6 +61,9 @@ unsafe fn gemm_basic_generic<
 ) {
     if m == 0 || n == 0 {
         return;
+    }
+    if !read_dst {
+        alpha.set_zero();
     }
 
     if dst_rs < 0 {
@@ -79,127 +80,34 @@ unsafe fn gemm_basic_generic<
         rhs_cs = -rhs_cs;
     }
 
-    // gevm case => transpose
+    if k <= 2 {
+        gevv::gevv(
+            m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha, beta,
+            mul_add, stack,
+        );
+        return;
+    }
     if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
-        (dst_rs, dst_cs) = (dst_cs, dst_rs);
-        (lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs) = (rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs);
-        (m, n) = (n, m);
-    }
-
-    let zero_dst = || {
-        if read_dst {
-            for col in 0..n {
-                for row in 0..m {
-                    let dst = dst
-                        .wrapping_offset(row as isize * dst_rs)
-                        .wrapping_offset(col as isize * dst_cs);
-
-                    *dst = alpha * *dst;
-                }
-            }
-        } else {
-            for col in 0..n {
-                for row in 0..m {
-                    let dst = dst
-                        .wrapping_offset(row as isize * dst_rs)
-                        .wrapping_offset(col as isize * dst_cs);
-
-                    *dst = T::zero();
-                }
-            }
-        }
-    };
-
-    if k == 0 {
-        zero_dst();
+        gemv::gemv(
+            n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha, beta,
+            mul_add, stack,
+        );
         return;
     }
-
-    if k == 1 {
-        if read_dst {
-            if alpha == T::one() {
-                for col in 0..n {
-                    let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
-                    for row in 0..m {
-                        let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
-                        let dst = dst
-                            .wrapping_offset(row as isize * dst_rs)
-                            .wrapping_offset(col as isize * dst_cs);
-
-                        *dst = mul_add(lhs, rhs, *dst);
-                    }
-                }
-            } else {
-                for col in 0..n {
-                    let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
-                    for row in 0..m {
-                        let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
-                        let dst = dst
-                            .wrapping_offset(row as isize * dst_rs)
-                            .wrapping_offset(col as isize * dst_cs);
-
-                        *dst = alpha * *dst + lhs * rhs;
-                    }
-                }
-            }
-        } else {
-            for col in 0..n {
-                let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
-                for row in 0..m {
-                    let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
-                    let dst = dst
-                        .wrapping_offset(row as isize * dst_rs)
-                        .wrapping_offset(col as isize * dst_cs);
-
-                    *dst = lhs * rhs;
-                }
-            }
-        }
-        return;
-    }
-
-    // gemv case
     if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
-        zero_dst();
-        macro_rules! do_work {
-            ($n: tt) => {
-                for depth in 0..k {
-                    seq!(COL in 0..$n {
-                        let rhs~COL = beta * *rhs
-                            .wrapping_offset(COL as isize * rhs_cs)
-                            .wrapping_offset(depth as isize * rhs_rs);
-                    });
-                    for row in 0..m {
-                        let lhs = *lhs
-                            .wrapping_offset(depth as isize * lhs_cs)
-                            .wrapping_offset(row as isize * lhs_rs);
-
-                        seq!(COL in 0..$n {
-                            {
-                                let dst = dst
-                                    .wrapping_offset(COL as isize * dst_cs)
-                                    .wrapping_offset(row as isize * dst_rs);
-                                *dst = *dst + rhs~COL * lhs;
-                            }
-                        });
-                    }
-                }
-            }
-        }
-        match n {
-            1 => do_work!(1),
-            2 => do_work!(2),
-            3 => do_work!(3),
-            4 => do_work!(4),
-            _ => (),
-        }
+        gemv::gemv(
+            m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha, beta,
+            mul_add, stack,
+        );
         return;
     }
 
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
+    let threading_threshold = 48 * 48 * 256;
+
     // use a single thread for small workloads
-    let n_threads = if m * nc * kc <= 48 * 48 * 256 {
+    let n_threads = if m * nc * kc <= threading_threshold {
         1
     } else {
         n_threads
@@ -231,9 +139,6 @@ unsafe fn gemm_basic_generic<
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
 
     let mut col_outer = 0;
-    if !read_dst {
-        alpha = T::zero();
-    }
     while col_outer != n {
         let n_chunk = nc.min(n - col_outer);
 
@@ -277,7 +182,7 @@ unsafe fn gemm_basic_generic<
             }
 
             // use a single thread for small workloads
-            let n_threads = if m * n_chunk * k_chunk <= 48 * 48 * 256 {
+            let n_threads = if m * n_chunk * k_chunk <= threading_threshold {
                 1
             } else {
                 n_threads
@@ -317,7 +222,7 @@ unsafe fn gemm_basic_generic<
                         continue;
                     }
 
-                    let do_pack_lhs = (m_chunk % MR != 0) || lhs_rs != 1 || n > 16;
+                    let do_pack_lhs = (m_chunk % (MR / N) != 0) || lhs_rs != 1 || n > 16;
                     let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                     if do_pack_lhs {
@@ -403,7 +308,7 @@ unsafe fn gemm_basic_generic<
                 use rayon::prelude::*;
                 (0..n_threads).into_par_iter().for_each(func);
             }
-            alpha = T::one();
+            alpha.set_one();
             depth_outer += k_chunk;
         }
         col_outer += n_chunk;
@@ -804,7 +709,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
-                    <$ty>::mul_add,
+                    |a, b, c| <$ty>::mul_add(a, b, c),
                     &[
                         [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
                         [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
@@ -880,7 +785,7 @@ macro_rules! gemm_def {
                     alpha,
                     beta,
                     n_threads,
-                    <$ty>::mul_add,
+                    |a, b, c| <$ty>::mul_add(a, b, c),
                     &[
                         [
                             x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>, x1x5::<0>, x1x6::<0>,

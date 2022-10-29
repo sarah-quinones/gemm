@@ -4,6 +4,8 @@
 
 mod cache;
 mod gemm;
+mod gemv;
+mod gevv;
 mod microkernel;
 mod pack_operands;
 
@@ -64,6 +66,10 @@ mod tests {
         mnks.push((16, 2, 1));
         mnks.push((16, 3, 1));
         mnks.push((16, 4, 1));
+        mnks.push((16, 1, 2));
+        mnks.push((16, 2, 2));
+        mnks.push((16, 3, 2));
+        mnks.push((16, 4, 2));
         mnks.push((16, 16, 1));
         mnks.push((8, 16, 1));
         mnks.push((16, 8, 1));
@@ -84,8 +90,10 @@ mod tests {
         let n_threads = 1;
 
         for (m, n, k) in mnks {
+            dbg!(m, n, k);
             for alpha in [0.0, 1.0, 2.3] {
                 for beta in [0.0, 1.0, 2.3] {
+                    dbg!(alpha, beta);
                     let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
                     let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
                     let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();

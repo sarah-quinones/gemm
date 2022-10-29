@@ -1,3 +1,8 @@
+use crate::Ptr;
+
+pub(crate) type MicroKernelFn<T> =
+    unsafe fn(usize, usize, usize, Ptr<T>, Ptr<T>, Ptr<T>, isize, isize, isize, isize, isize, T, T);
+
 macro_rules! microkernel {
     ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
         #[inline]
