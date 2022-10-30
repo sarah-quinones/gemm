@@ -3,7 +3,7 @@ use num_traits::{One, Zero};
 
 use crate::simd::Simd;
 
-#[inline(never)]
+#[inline(always)]
 pub unsafe fn gevv<
     T: Copy
         + Zero
@@ -34,45 +34,58 @@ pub unsafe fn gevv<
     mul_add: impl Fn(T, T, T) -> T,
     _stack: DynStack<'_>,
 ) {
-    S::vectorize(
-        #[inline(always)]
-        || match k {
-            0 => {
-                if !alpha.is_zero() {
-                    for col in 0..n {
-                        for row in 0..m {
-                            let dst = dst
-                                .wrapping_offset(row as isize * dst_rs)
-                                .wrapping_offset(col as isize * dst_cs);
-
-                            *dst = alpha * *dst;
-                        }
-                    }
-                } else {
-                    for col in 0..n {
-                        for row in 0..m {
-                            let dst = dst
-                                .wrapping_offset(row as isize * dst_rs)
-                                .wrapping_offset(col as isize * dst_cs);
-
-                            *dst = T::zero();
-                        }
-                    }
-                }
-                return;
-            }
-            1 => {
-                if !alpha.is_zero() {
-                    if alpha.is_one() {
+    macro_rules! do_work {
+        () => {
+            match k {
+                0 => {
+                    if !alpha.is_zero() {
                         for col in 0..n {
-                            let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
                             for row in 0..m {
-                                let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
                                 let dst = dst
                                     .wrapping_offset(row as isize * dst_rs)
                                     .wrapping_offset(col as isize * dst_cs);
 
-                                *dst = mul_add(lhs, rhs, *dst);
+                                *dst = alpha * *dst;
+                            }
+                        }
+                    } else {
+                        for col in 0..n {
+                            for row in 0..m {
+                                let dst = dst
+                                    .wrapping_offset(row as isize * dst_rs)
+                                    .wrapping_offset(col as isize * dst_cs);
+
+                                *dst = T::zero();
+                            }
+                        }
+                    }
+                    return;
+                }
+                1 => {
+                    if !alpha.is_zero() {
+                        if alpha.is_one() {
+                            for col in 0..n {
+                                let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
+                                for row in 0..m {
+                                    let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
+                                    let dst = dst
+                                        .wrapping_offset(row as isize * dst_rs)
+                                        .wrapping_offset(col as isize * dst_cs);
+
+                                    *dst = mul_add(lhs, rhs, *dst);
+                                }
+                            }
+                        } else {
+                            for col in 0..n {
+                                let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
+                                for row in 0..m {
+                                    let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
+                                    let dst = dst
+                                        .wrapping_offset(row as isize * dst_rs)
+                                        .wrapping_offset(col as isize * dst_cs);
+
+                                    *dst = mul_add(lhs, rhs, alpha * *dst);
+                                }
                             }
                         }
                     } else {
@@ -84,28 +97,52 @@ pub unsafe fn gevv<
                                     .wrapping_offset(row as isize * dst_rs)
                                     .wrapping_offset(col as isize * dst_cs);
 
-                                *dst = mul_add(lhs, rhs, alpha * *dst);
+                                *dst = lhs * rhs;
                             }
                         }
                     }
-                } else {
-                    for col in 0..n {
-                        let rhs = beta * *rhs.wrapping_offset(col as isize * rhs_cs);
-                        for row in 0..m {
-                            let lhs = *lhs.wrapping_offset(row as isize * lhs_rs);
-                            let dst = dst
-                                .wrapping_offset(row as isize * dst_rs)
-                                .wrapping_offset(col as isize * dst_cs);
-
-                            *dst = lhs * rhs;
-                        }
-                    }
+                    return;
                 }
-                return;
-            }
-            2 => {
-                if !alpha.is_zero() {
-                    if alpha.is_one() {
+                2 => {
+                    if !alpha.is_zero() {
+                        if alpha.is_one() {
+                            for col in 0..n {
+                                let rhs0 =
+                                    beta * *rhs.wrapping_offset(col as isize * rhs_cs + 0 * rhs_rs);
+                                let rhs1 =
+                                    beta * *rhs.wrapping_offset(col as isize * rhs_cs + 1 * rhs_rs);
+                                for row in 0..m {
+                                    let lhs0 =
+                                        *lhs.wrapping_offset(row as isize * lhs_rs + 0 * lhs_cs);
+                                    let lhs1 =
+                                        *lhs.wrapping_offset(row as isize * lhs_rs + 1 * lhs_cs);
+                                    let dst = dst
+                                        .wrapping_offset(row as isize * dst_rs)
+                                        .wrapping_offset(col as isize * dst_cs);
+
+                                    *dst = mul_add(lhs1, rhs1, mul_add(lhs0, rhs0, *dst));
+                                }
+                            }
+                        } else {
+                            for col in 0..n {
+                                let rhs0 =
+                                    beta * *rhs.wrapping_offset(col as isize * rhs_cs + 0 * rhs_rs);
+                                let rhs1 =
+                                    beta * *rhs.wrapping_offset(col as isize * rhs_cs + 1 * rhs_rs);
+                                for row in 0..m {
+                                    let lhs0 =
+                                        *lhs.wrapping_offset(row as isize * lhs_rs + 0 * lhs_cs);
+                                    let lhs1 =
+                                        *lhs.wrapping_offset(row as isize * lhs_rs + 1 * lhs_cs);
+                                    let dst = dst
+                                        .wrapping_offset(row as isize * dst_rs)
+                                        .wrapping_offset(col as isize * dst_cs);
+
+                                    *dst = mul_add(lhs1, rhs1, mul_add(lhs0, rhs0, alpha * *dst));
+                                }
+                            }
+                        }
+                    } else {
                         for col in 0..n {
                             let rhs0 =
                                 beta * *rhs.wrapping_offset(col as isize * rhs_cs + 0 * rhs_rs);
@@ -118,44 +155,15 @@ pub unsafe fn gevv<
                                     .wrapping_offset(row as isize * dst_rs)
                                     .wrapping_offset(col as isize * dst_cs);
 
-                                *dst = mul_add(lhs1, rhs1, mul_add(lhs0, rhs0, *dst));
-                            }
-                        }
-                    } else {
-                        for col in 0..n {
-                            let rhs0 =
-                                beta * *rhs.wrapping_offset(col as isize * rhs_cs + 0 * rhs_rs);
-                            let rhs1 =
-                                beta * *rhs.wrapping_offset(col as isize * rhs_cs + 1 * rhs_rs);
-                            for row in 0..m {
-                                let lhs0 = *lhs.wrapping_offset(row as isize * lhs_rs + 0 * lhs_cs);
-                                let lhs1 = *lhs.wrapping_offset(row as isize * lhs_rs + 1 * lhs_cs);
-                                let dst = dst
-                                    .wrapping_offset(row as isize * dst_rs)
-                                    .wrapping_offset(col as isize * dst_cs);
-
-                                *dst = mul_add(lhs1, rhs1, mul_add(lhs0, rhs0, alpha * *dst));
+                                *dst = mul_add(lhs1, rhs1, lhs0 * rhs0);
                             }
                         }
                     }
-                } else {
-                    for col in 0..n {
-                        let rhs0 = beta * *rhs.wrapping_offset(col as isize * rhs_cs + 0 * rhs_rs);
-                        let rhs1 = beta * *rhs.wrapping_offset(col as isize * rhs_cs + 1 * rhs_rs);
-                        for row in 0..m {
-                            let lhs0 = *lhs.wrapping_offset(row as isize * lhs_rs + 0 * lhs_cs);
-                            let lhs1 = *lhs.wrapping_offset(row as isize * lhs_rs + 1 * lhs_cs);
-                            let dst = dst
-                                .wrapping_offset(row as isize * dst_rs)
-                                .wrapping_offset(col as isize * dst_cs);
-
-                            *dst = mul_add(lhs1, rhs1, lhs0 * rhs0);
-                        }
-                    }
+                    return;
                 }
-                return;
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
-        },
-    )
+        };
+    }
+    do_work!()
 }
