@@ -402,10 +402,7 @@ macro_rules! gemm_def {
             k: usize,
             max_n_threads: usize,
         ) -> Result<StackReq, SizeOverflow> {
-            StackReq::try_any_of([
-                (GEMM.1)(n, m, k, max_n_threads)?,
-                (GEMM.1)(m, n, k, max_n_threads)?,
-            ])
+            (GEMM.1)(m, n, k, max_n_threads)
         }
 
         #[inline]
@@ -428,18 +425,10 @@ macro_rules! gemm_def {
             n_threads: usize,
             stack: DynStack<'_>,
         ) {
-            let do_transpose = dst_cs < dst_rs;
-            if do_transpose {
-                (GEMM.0)(
-                    n, m, k, dst, dst_rs, dst_cs, read_dst, rhs, rhs_rs, rhs_cs, lhs, lhs_rs,
-                    lhs_cs, alpha, beta, n_threads, stack,
-                )
-            } else {
-                (GEMM.0)(
-                    m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs,
-                    rhs_rs, alpha, beta, n_threads, stack,
-                )
-            }
+            (GEMM.0)(
+                m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta, n_threads, stack,
+            )
         }
 
         mod scalar {
