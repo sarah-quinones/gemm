@@ -136,7 +136,7 @@ unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
     let packed_rhs = Ptr(packed_rhs);
-    let do_pack_rhs = false;
+    let do_pack_rhs = m > 8 * MR && rhs_rs.abs() != 1;
 
     let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
@@ -159,7 +159,7 @@ unsafe fn gemm_basic_generic<
             };
 
             if do_pack_rhs {
-                pack_rhs::<T, NR, _>(
+                pack_rhs::<T, 1, NR, _>(
                     simd,
                     n_chunk,
                     k_chunk,
@@ -179,7 +179,10 @@ unsafe fn gemm_basic_generic<
             let mut n_jobs = 0;
             let mut row_outer = 0;
             while row_outer != m {
-                let m_chunk = mc.min(m - row_outer);
+                let mut m_chunk = mc.min(m - row_outer);
+                if m_chunk > N {
+                    m_chunk = m_chunk / N * N;
+                }
                 let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
                 n_jobs += n_col_mini_chunks * n_row_mini_chunks;
                 row_outer += m_chunk;
@@ -212,7 +215,10 @@ unsafe fn gemm_basic_generic<
                 let mut row_outer = 0;
                 let mut job_id = 0;
                 while row_outer != m {
-                    let m_chunk = mc.min(m - row_outer);
+                    let mut m_chunk = mc.min(m - row_outer);
+                    if m_chunk > N {
+                        m_chunk = m_chunk / N * N;
+                    }
                     let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
 
                     let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
@@ -226,11 +232,11 @@ unsafe fn gemm_basic_generic<
                         continue;
                     }
 
-                    let do_pack_lhs = (m_chunk % (MR / N) != 0) || lhs_rs != 1 || n > 2 * NR;
+                    let do_pack_lhs = (m_chunk % (MR / N) != 0) || lhs_rs != 1 || n > 8 * NR;
                     let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                     if do_pack_lhs {
-                        pack_lhs::<T, MR, _>(
+                        pack_lhs::<T, N, MR, _>(
                             simd,
                             m_chunk,
                             k_chunk,
