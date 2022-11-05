@@ -50,8 +50,8 @@ macro_rules! microkernel {
             impl KernelIter {
                 #[inline(always)]
                 unsafe fn execute(self, iter: usize) {
-                    let packed_lhs = self.packed_lhs.offset(iter as isize * self.lhs_cs);
-                    let packed_rhs = self.packed_rhs.offset(iter as isize * self.rhs_rs);
+                    let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
+                    let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {
                         (*self.lhs.add(M_ITER))
@@ -59,7 +59,7 @@ macro_rules! microkernel {
                     });
 
                     seq_macro::seq!(N_ITER in 0..$nr {
-                        (*self.rhs).write(splat(*packed_rhs.offset(N_ITER * self.rhs_cs)));
+                        (*self.rhs).write(splat(*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs)));
                         let accum = self.accum.add(N_ITER * $mr_div_n);
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let accum = &mut *accum.add(M_ITER);
@@ -95,8 +95,8 @@ macro_rules! microkernel {
                         iter.execute(UNROLL_ITER);
                     });
 
-                    packed_lhs = packed_lhs.offset(4 * lhs_cs);
-                    packed_rhs = packed_rhs.offset(4 * rhs_rs);
+                    packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                    packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
 
                     depth -= 1;
                     if depth == 0 {
@@ -120,8 +120,8 @@ macro_rules! microkernel {
                     }
                     .execute(0);
 
-                    packed_lhs = packed_lhs.offset(lhs_cs);
-                    packed_rhs = packed_rhs.offset(rhs_rs);
+                    packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                    packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
 
                     depth -= 1;
                     if depth == 0 {
