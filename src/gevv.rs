@@ -1,4 +1,3 @@
-use dyn_stack::DynStack;
 use num_traits::{One, Zero};
 
 use crate::simd::Simd;
@@ -32,7 +31,6 @@ pub unsafe fn gevv<
     alpha: T,
     beta: T,
     mul_add: impl Fn(T, T, T) -> T,
-    _stack: DynStack<'_>,
 ) {
     macro_rules! do_work {
         () => {

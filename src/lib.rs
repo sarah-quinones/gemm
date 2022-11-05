@@ -11,7 +11,6 @@ mod pack_operands;
 mod simd;
 
 pub use crate::gemm::gemm;
-pub use crate::gemm::gemm_req;
 
 pub(crate) struct Ptr<T>(*mut T);
 
@@ -60,8 +59,6 @@ mod tests {
 
     #[test]
     fn test_gemm() {
-        use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
-
         let mut mnks = vec![];
         mnks.push((64, 64, 4));
         mnks.push((256, 256, 256));
@@ -101,9 +98,6 @@ mod tests {
                     let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();
                     let mut d_vec = c_vec.clone();
 
-                    let mut mem =
-                        GlobalMemBuffer::new(gemm::gemm_req::<f64>(m, n, k, n_threads).unwrap());
-                    let mut stack = DynStack::new(&mut mem);
                     unsafe {
                         gemm::gemm(
                             m,
@@ -122,7 +116,6 @@ mod tests {
                             alpha,
                             beta,
                             n_threads,
-                            stack.rb_mut(),
                         );
 
                         gemm::gemm_fallback(
@@ -142,7 +135,6 @@ mod tests {
                             alpha,
                             beta,
                             n_threads,
-                            stack.rb_mut(),
                         );
                     }
                     for (c, d) in c_vec.iter().zip(d_vec.iter()) {

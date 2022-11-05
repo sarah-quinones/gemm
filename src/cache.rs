@@ -1,10 +1,10 @@
 use lazy_static::lazy_static;
 
 #[derive(Default, Debug, Copy, Clone)]
-struct CacheInfo {
-    associativity: usize,
-    cache_bytes: usize,
-    cache_line_bytes: usize,
+pub struct CacheInfo {
+    pub associativity: usize,
+    pub cache_bytes: usize,
+    pub cache_line_bytes: usize,
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -173,7 +173,7 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
 ];
 
 lazy_static! {
-    static ref CACHE_INFO: [CacheInfo; 3] = cache_info().unwrap_or(CACHE_INFO_DEFAULT);
+    pub static ref CACHE_INFO: [CacheInfo; 3] = cache_info().unwrap_or(CACHE_INFO_DEFAULT);
 }
 
 #[inline]
@@ -263,11 +263,11 @@ pub fn kernel_params(
     //  - A macropanel: mc×kc
     // mc×kc×scalar_bytes
     let auto_mc = if l2_cache_bytes == 0 {
-        4 * mr
+        panic!();
     } else {
-        let rhs_micropanel_bytes = nr * auto_kc * sizeof;
-        let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
-        let lhs_l2_assoc = l2_assoc - rhs_l2_assoc;
+        // let rhs_micropanel_bytes = nr * auto_kc * sizeof;
+        // let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
+        let lhs_l2_assoc = l2_assoc - 1;
 
         let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
@@ -284,9 +284,9 @@ pub fn kernel_params(
     let auto_nc = if l3_cache_bytes == 0 {
         128 * nr
     } else {
-        let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
-        let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
-        let rhs_l3_assoc = l3_assoc - lhs_l3_assoc;
+        // let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
+        // let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
+        let rhs_l3_assoc = l3_assoc - 1;
         let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
 
         let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);

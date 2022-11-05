@@ -1,4 +1,3 @@
-use dyn_stack::DynStack;
 use num_traits::{One, Zero};
 use seq_macro::seq;
 
@@ -32,7 +31,6 @@ pub unsafe fn gemv<
     alpha: T,
     beta: T,
     mul_add: impl Fn(T, T, T) -> T,
-    _stack: DynStack<'_>,
 ) {
     if !alpha.is_zero() {
         for col in 0..n {
