@@ -4,17 +4,17 @@ pub(crate) type MicroKernelFn<T> =
     unsafe fn(usize, usize, usize, Ptr<T>, Ptr<T>, Ptr<T>, isize, isize, isize, isize, isize, T, T);
 
 macro_rules! microkernel {
-    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
+    ($([$target: tt])?, $name: ident) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
-        pub(crate) unsafe fn $name<const ALPHA: u8>(
+        pub(crate) unsafe fn $name<const ALPHA: u8, const MR_DIV_N: usize, const NR: usize>(
             m: usize,
             n: usize,
             k: usize,
-            dst: $crate::Ptr<T>,
-            packed_lhs: $crate::Ptr<T>,
-            packed_rhs: $crate::Ptr<T>,
+            dst: crate::Ptr<T>,
+            packed_lhs: crate::Ptr<T>,
+            packed_rhs: crate::Ptr<T>,
             dst_cs: isize,
             dst_rs: isize,
             lhs_cs: isize,
@@ -29,10 +29,10 @@ macro_rules! microkernel {
             let mut packed_lhs = packed_lhs.0;
             let mut packed_rhs = packed_rhs.0;
 
-            let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
+            let mut accum_storage = [[splat(0.0); MR_DIV_N]; NR];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
 
-            let mut lhs = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
+            let mut lhs = [::core::mem::MaybeUninit::<Pack>::uninit(); MR_DIV_N];
             let mut rhs = ::core::mem::MaybeUninit::<Pack>::uninit();
 
             #[derive(Copy, Clone)]
@@ -49,26 +49,26 @@ macro_rules! microkernel {
 
             impl KernelIter {
                 #[inline(always)]
-                unsafe fn execute(self, iter: usize) {
+                unsafe fn execute<const MR_DIV_N: usize, const NR: usize>(self, iter: usize) {
                     let packed_lhs = self.packed_lhs.offset(iter as isize * self.lhs_cs);
                     let packed_rhs = self.packed_rhs.offset(iter as isize * self.rhs_rs);
 
-                    seq_macro::seq!(M_ITER in 0..$mr_div_n {
-                        (*self.lhs.add(M_ITER))
-                            .write((packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned());
+                    crate::unroll::<MR_DIV_N>(|m_iter|{
+                        (*self.lhs.add(m_iter))
+                            .write((packed_lhs.add(m_iter * N) as *const Pack).read_unaligned());
                     });
 
-                    seq_macro::seq!(N_ITER in 0..$nr {
-                        (*self.rhs).write(splat(*packed_rhs.offset(N_ITER * self.rhs_cs)));
-                        let accum = self.accum.add(N_ITER * $mr_div_n);
-                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                            let accum = &mut *accum.add(M_ITER);
+                    crate::unroll::<NR>(|n_iter| {
+                        (*self.rhs).write(splat(*packed_rhs.offset(n_iter as isize * self.rhs_cs)));
+                        let accum = self.accum.add(n_iter * MR_DIV_N);
+                        crate::unroll::<MR_DIV_N>(|m_iter| {
+                            let accum = &mut *accum.add(m_iter);
                             *accum = mul_add(
-                                (*self.lhs.add(M_ITER)).assume_init(),
+                                (*self.lhs.add(m_iter)).assume_init(),
                                 (*self.rhs).assume_init(),
                                 *accum,
                             );
-                        }});
+                        });
                     });
                 }
             }
@@ -91,12 +91,13 @@ macro_rules! microkernel {
                         rhs: &mut rhs,
                     };
 
-                    seq_macro::seq!(UNROLL_ITER in 0..4 {
-                        iter.execute(UNROLL_ITER);
-                    });
+                    iter.execute::<MR_DIV_N, NR>(0);
+                    iter.execute::<MR_DIV_N, NR>(1);
+                    iter.execute::<MR_DIV_N, NR>(2);
+                    iter.execute::<MR_DIV_N, NR>(3);
 
-                    packed_lhs = packed_lhs.offset(4 * lhs_cs);
-                    packed_rhs = packed_rhs.offset(4 * rhs_rs);
+                    packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                    packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
 
                     depth -= 1;
                     if depth == 0 {
@@ -118,10 +119,10 @@ macro_rules! microkernel {
                         lhs: lhs.as_mut_ptr(),
                         rhs: &mut rhs,
                     }
-                    .execute(0);
+                    .execute::<MR_DIV_N, NR>(0);
 
-                    packed_lhs = packed_lhs.offset(lhs_cs);
-                    packed_rhs = packed_rhs.offset(rhs_rs);
+                    packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                    packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
 
                     depth -= 1;
                     if depth == 0 {
@@ -130,80 +131,80 @@ macro_rules! microkernel {
                 }
             }
 
-            if m == $mr_div_n * N && n == $nr {
+            if m == MR_DIV_N * N && n == NR {
                 let alpha = splat(alpha);
                 let beta = splat(beta);
                 if dst_rs == 1 {
 
                     if ALPHA == 2 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize + n_iter as isize * dst_cs) as *mut Pack;
                                 dst.write_unaligned(add(
                                     mul(alpha, dst.read_unaligned()),
-                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                    mul(beta, *accum.add(m_iter + MR_DIV_N * n_iter)),
                                 ));
-                            }});
+                            });
                         });
                     } else if ALPHA == 1 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize + n_iter as isize * dst_cs) as *mut Pack;
                                 dst.write_unaligned(mul_add(
                                     beta,
-                                    *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                    *accum.add(m_iter + MR_DIV_N * n_iter),
                                     dst.read_unaligned(),
                                 ));
-                            }});
+                            });
                         });
                     } else {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)));
-                            }});
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize + n_iter as isize * dst_cs) as *mut Pack;
+                                dst.write_unaligned(mul(beta, *accum.add(m_iter + MR_DIV_N * n_iter)));
+                            });
                         });
                     }
                 } else {
                     if ALPHA == 2 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize * dst_rs + n_iter as isize * dst_cs);
                                 scatter(
                                     dst,
                                     dst_rs,
                                     add(
                                         mul(alpha, gather(dst, dst_rs)),
-                                        mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                        mul(beta, *accum.add(m_iter + MR_DIV_N * n_iter)),
                                     ),
                                 );
-                            }});
+                            });
                         });
                     } else if ALPHA == 1 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize * dst_rs + n_iter as isize * dst_cs);
                                 scatter(
                                     dst,
                                     dst_rs,
                                     mul_add(
                                         beta,
-                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                        *accum.add(m_iter + MR_DIV_N * n_iter),
                                         gather(dst, dst_rs),
                                     ),
                                 );
-                            }});
+                            });
                         });
                     } else {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                        crate::unroll::<NR>(|n_iter| {
+                            crate::unroll::<MR_DIV_N>(|m_iter| {
+                                let dst = dst.offset((m_iter * N) as isize * dst_rs + n_iter as isize * dst_cs);
                                 scatter(
                                     dst,
                                     dst_rs,
-                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                    mul(beta, *accum.add(m_iter + MR_DIV_N * n_iter)),
                                 );
-                            }});
+                            });
                         });
                     }
                 }
@@ -214,7 +215,7 @@ macro_rules! microkernel {
                 if ALPHA == 2 {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                        let src_j = src.add(j * MR_DIV_N * N);
 
                         for i in 0..m {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
@@ -226,7 +227,7 @@ macro_rules! microkernel {
                 } else if ALPHA == 1 {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                        let src_j = src.add(j * MR_DIV_N * N);
 
                         for i in 0..m {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
@@ -238,7 +239,7 @@ macro_rules! microkernel {
                 } else {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                        let src_j = src.add(j * MR_DIV_N * N);
 
                         for i in 0..m {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
@@ -299,15 +300,7 @@ pub mod scalar {
             add(mul(a, b), c)
         }
 
-        microkernel!(, x1x1, 1, 1);
-        microkernel!(, x1x2, 1, 2);
-        microkernel!(, x1x3, 1, 3);
-        microkernel!(, x1x4, 1, 4);
-
-        microkernel!(, x2x1, 2, 1);
-        microkernel!(, x2x2, 2, 2);
-        microkernel!(, x2x3, 2, 3);
-        microkernel!(, x2x4, 2, 4);
+        microkernel!(, ukr);
     }
 
     pub mod f64 {
@@ -355,15 +348,7 @@ pub mod scalar {
             add(mul(a, b), c)
         }
 
-        microkernel!(, x1x1, 1, 1);
-        microkernel!(, x1x2, 1, 2);
-        microkernel!(, x1x3, 1, 3);
-        microkernel!(, x1x4, 1, 4);
-
-        microkernel!(, x2x1, 2, 1);
-        microkernel!(, x2x2, 2, 2);
-        microkernel!(, x2x3, 2, 3);
-        microkernel!(, x2x4, 2, 4);
+        microkernel!(, ukr);
     }
 }
 
@@ -419,15 +404,7 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(["sse"], x1x1, 1, 1);
-        microkernel!(["sse"], x1x2, 1, 2);
-        microkernel!(["sse"], x1x3, 1, 3);
-        microkernel!(["sse"], x1x4, 1, 4);
-
-        microkernel!(["sse"], x2x1, 2, 1);
-        microkernel!(["sse"], x2x2, 2, 2);
-        microkernel!(["sse"], x2x3, 2, 3);
-        microkernel!(["sse"], x2x4, 2, 4);
+        microkernel!(["sse"], ukr);
     }
 
     pub mod f64 {
@@ -480,15 +457,7 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(["sse"], x1x1, 1, 1);
-        microkernel!(["sse"], x1x2, 1, 2);
-        microkernel!(["sse"], x1x3, 1, 3);
-        microkernel!(["sse"], x1x4, 1, 4);
-
-        microkernel!(["sse"], x2x1, 2, 1);
-        microkernel!(["sse"], x2x2, 2, 2);
-        microkernel!(["sse"], x2x3, 2, 3);
-        microkernel!(["sse"], x2x4, 2, 4);
+        microkernel!(["sse"], ukr);
     }
 }
 
@@ -544,15 +513,7 @@ pub mod avx {
             add(mul(a, b), c)
         }
 
-        microkernel!(["avx"], x1x1, 1, 1);
-        microkernel!(["avx"], x1x2, 1, 2);
-        microkernel!(["avx"], x1x3, 1, 3);
-        microkernel!(["avx"], x1x4, 1, 4);
-
-        microkernel!(["avx"], x2x1, 2, 1);
-        microkernel!(["avx"], x2x2, 2, 2);
-        microkernel!(["avx"], x2x3, 2, 3);
-        microkernel!(["avx"], x2x4, 2, 4);
+        microkernel!(["avx"], ukr);
     }
 
     pub mod f64 {
@@ -605,15 +566,7 @@ pub mod avx {
             add(mul(a, b), c)
         }
 
-        microkernel!(["avx"], x1x1, 1, 1);
-        microkernel!(["avx"], x1x2, 1, 2);
-        microkernel!(["avx"], x1x3, 1, 3);
-        microkernel!(["avx"], x1x4, 1, 4);
-
-        microkernel!(["avx"], x2x1, 2, 1);
-        microkernel!(["avx"], x2x2, 2, 2);
-        microkernel!(["avx"], x2x3, 2, 3);
-        microkernel!(["avx"], x2x4, 2, 4);
+        microkernel!(["avx"], ukr);
     }
 }
 
@@ -669,20 +622,7 @@ pub mod fma {
             transmute(_mm256_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["fma"], x1x1, 1, 1);
-        microkernel!(["fma"], x1x2, 1, 2);
-        microkernel!(["fma"], x1x3, 1, 3);
-        microkernel!(["fma"], x1x4, 1, 4);
-
-        microkernel!(["fma"], x2x1, 2, 1);
-        microkernel!(["fma"], x2x2, 2, 2);
-        microkernel!(["fma"], x2x3, 2, 3);
-        microkernel!(["fma"], x2x4, 2, 4);
-
-        microkernel!(["fma"], x3x1, 3, 1);
-        microkernel!(["fma"], x3x2, 3, 2);
-        microkernel!(["fma"], x3x3, 3, 3);
-        microkernel!(["fma"], x3x4, 3, 4);
+        microkernel!(["fma"], ukr);
     }
 
     pub mod f64 {
@@ -735,20 +675,7 @@ pub mod fma {
             transmute(_mm256_fmadd_pd(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["fma"], x1x1, 1, 1);
-        microkernel!(["fma"], x1x2, 1, 2);
-        microkernel!(["fma"], x1x3, 1, 3);
-        microkernel!(["fma"], x1x4, 1, 4);
-
-        microkernel!(["fma"], x2x1, 2, 1);
-        microkernel!(["fma"], x2x2, 2, 2);
-        microkernel!(["fma"], x2x3, 2, 3);
-        microkernel!(["fma"], x2x4, 2, 4);
-
-        microkernel!(["fma"], x3x1, 3, 1);
-        microkernel!(["fma"], x3x2, 3, 2);
-        microkernel!(["fma"], x3x3, 3, 3);
-        microkernel!(["fma"], x3x4, 3, 4);
+        microkernel!(["fma"], ukr);
     }
 }
 
@@ -804,32 +731,7 @@ pub mod avx512f {
             transmute(_mm512_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["avx512f"], x1x1, 1, 1);
-        microkernel!(["avx512f"], x1x2, 1, 2);
-        microkernel!(["avx512f"], x1x3, 1, 3);
-        microkernel!(["avx512f"], x1x4, 1, 4);
-        microkernel!(["avx512f"], x1x5, 1, 5);
-        microkernel!(["avx512f"], x1x6, 1, 6);
-        microkernel!(["avx512f"], x1x7, 1, 7);
-        microkernel!(["avx512f"], x1x8, 1, 8);
-
-        microkernel!(["avx512f"], x2x1, 2, 1);
-        microkernel!(["avx512f"], x2x2, 2, 2);
-        microkernel!(["avx512f"], x2x3, 2, 3);
-        microkernel!(["avx512f"], x2x4, 2, 4);
-        microkernel!(["avx512f"], x2x5, 2, 5);
-        microkernel!(["avx512f"], x2x6, 2, 6);
-        microkernel!(["avx512f"], x2x7, 2, 7);
-        microkernel!(["avx512f"], x2x8, 2, 8);
-
-        microkernel!(["avx512f"], x3x1, 3, 1);
-        microkernel!(["avx512f"], x3x2, 3, 2);
-        microkernel!(["avx512f"], x3x3, 3, 3);
-        microkernel!(["avx512f"], x3x4, 3, 4);
-        microkernel!(["avx512f"], x3x5, 3, 5);
-        microkernel!(["avx512f"], x3x6, 3, 6);
-        microkernel!(["avx512f"], x3x7, 3, 7);
-        microkernel!(["avx512f"], x3x8, 3, 8);
+        microkernel!(["avx512f"], ukr);
     }
 
     pub mod f64 {
@@ -898,31 +800,6 @@ pub mod avx512f {
             transmute(_mm512_fmadd_pd(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["avx512f"], x1x1, 1, 1);
-        microkernel!(["avx512f"], x1x2, 1, 2);
-        microkernel!(["avx512f"], x1x3, 1, 3);
-        microkernel!(["avx512f"], x1x4, 1, 4);
-        microkernel!(["avx512f"], x1x5, 1, 5);
-        microkernel!(["avx512f"], x1x6, 1, 6);
-        microkernel!(["avx512f"], x1x7, 1, 7);
-        microkernel!(["avx512f"], x1x8, 1, 8);
-
-        microkernel!(["avx512f"], x2x1, 2, 1);
-        microkernel!(["avx512f"], x2x2, 2, 2);
-        microkernel!(["avx512f"], x2x3, 2, 3);
-        microkernel!(["avx512f"], x2x4, 2, 4);
-        microkernel!(["avx512f"], x2x5, 2, 5);
-        microkernel!(["avx512f"], x2x6, 2, 6);
-        microkernel!(["avx512f"], x2x7, 2, 7);
-        microkernel!(["avx512f"], x2x8, 2, 8);
-
-        microkernel!(["avx512f"], x3x1, 3, 1);
-        microkernel!(["avx512f"], x3x2, 3, 2);
-        microkernel!(["avx512f"], x3x3, 3, 3);
-        microkernel!(["avx512f"], x3x4, 3, 4);
-        microkernel!(["avx512f"], x3x5, 3, 5);
-        microkernel!(["avx512f"], x3x6, 3, 6);
-        microkernel!(["avx512f"], x3x7, 3, 7);
-        microkernel!(["avx512f"], x3x8, 3, 8);
+        microkernel!(["avx512f"], ukr);
     }
 }

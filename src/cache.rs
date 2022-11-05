@@ -14,7 +14,7 @@ pub struct KernelParams {
     pub nc: usize,
 }
 
-#[cfg(not(miri))]
+#[cfg(all(not(miri), any(target_arch = "x86", target_arch = "x86_64")))]
 fn cache_info() -> Option<[CacheInfo; 3]> {
     use raw_cpuid::CpuId;
     let cpuid = CpuId::new();
@@ -105,29 +105,75 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
     None
 }
 
-#[cfg(miri)]
+#[cfg(not(all(not(miri), any(target_arch = "x86", target_arch = "x86_64"))))]
 fn cache_info() -> Option<[CacheInfo; 3]> {
     None
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 32 * 1024, // 32KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 256 * 1024, // 256KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 2 * 1024 * 1024, // 2MiB
+        cache_line_bytes: 64,
+    },
+];
+
+#[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
+static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 64 * 1024, // 64KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 512 * 1024, // 512KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 4 * 1024 * 1024, // 4MiB
+        cache_line_bytes: 64,
+    },
+];
+
+#[cfg(not(any(
+    target_arch = "powerpc",
+    target_arch = "powerpc64",
+    target_arch = "x86",
+    target_arch = "x86_64"
+)))]
+static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 16 * 1024, // 16KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 512 * 1024, // 512KiB
+        cache_line_bytes: 64,
+    },
+    CacheInfo {
+        associativity: 8,
+        cache_bytes: 1024 * 1024, // 1MiB
+        cache_line_bytes: 64,
+    },
+];
+
 lazy_static! {
-    static ref CACHE_INFO: [CacheInfo; 3] = cache_info().unwrap_or([
-        CacheInfo {
-            associativity: 8,
-            cache_bytes: 32 * 1024, // 32KiB
-            cache_line_bytes: 64,
-        },
-        CacheInfo {
-            associativity: 8,
-            cache_bytes: 1024 * 1024, // 1MiB
-            cache_line_bytes: 64,
-        },
-        CacheInfo {
-            associativity: 8,
-            cache_bytes: 16 * 1024 * 1024 , // 16KiB
-            cache_line_bytes: 64,
-        },
-    ]);
+    static ref CACHE_INFO: [CacheInfo; 3] = cache_info().unwrap_or(CACHE_INFO_DEFAULT);
 }
 
 #[inline]
@@ -180,9 +226,9 @@ pub fn kernel_params(
 
     let l1_line_bytes = info[0].cache_line_bytes.max(64);
 
-    let l1_assoc = info[0].associativity.max(4);
-    let l2_assoc = info[1].associativity.max(4);
-    let l3_assoc = info[2].associativity.max(4);
+    let l1_assoc = info[0].associativity.max(2);
+    let l2_assoc = info[1].associativity.max(2);
+    let l3_assoc = info[2].associativity.max(2);
 
     let l1_n_sets = l1_cache_bytes / (l1_line_bytes * l1_assoc);
 
@@ -213,8 +259,7 @@ pub fn kernel_params(
     let auto_kc = div_ceil(k, k_iter);
 
     // l2 cache must hold
-    //  - B micropanel: nr×kc
-    //  - C update? 1 assoc degree
+    //  - B micropanel: nr×kc: assume 1 assoc degree
     //  - A macropanel: mc×kc
     // mc×kc×scalar_bytes
     let auto_mc = if l2_cache_bytes == 0 {
@@ -222,7 +267,7 @@ pub fn kernel_params(
     } else {
         let rhs_micropanel_bytes = nr * auto_kc * sizeof;
         let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
-        let lhs_l2_assoc = l2_assoc - 1 - rhs_l2_assoc;
+        let lhs_l2_assoc = l2_assoc - rhs_l2_assoc;
 
         let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
@@ -234,15 +279,14 @@ pub fn kernel_params(
     };
 
     // l3 cache must hold
+    //  - A macropanel: mc×kc: assume 1 assoc degree
     //  - B macropanel: nc×kc
-    //  - A macropanel: mc×kc
-    //  - C update? 1 assoc degree
     let auto_nc = if l3_cache_bytes == 0 {
         128 * nr
     } else {
         let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
         let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
-        let rhs_l3_assoc = l3_assoc - 1 - lhs_l3_assoc;
+        let rhs_l3_assoc = l3_assoc - lhs_l3_assoc;
         let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
 
         let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);
