@@ -1,9 +1,7 @@
-use std::time::Duration;
-
 use criterion::{criterion_group, criterion_main, Criterion};
-use dyn_stack::{DynStack, GlobalMemBuffer, ReborrowMut};
-use gemm::{gemm, gemm_req};
+use gemm::gemm;
 use nalgebra::DMatrix;
+use std::time::Duration;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
@@ -32,8 +30,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
             let n_threads = rayon::current_num_threads();
 
-            let mut mem = GlobalMemBuffer::new(gemm_req::<f64>(m, n, k, n_threads).unwrap());
-            let mut stack = DynStack::new(&mut mem);
             for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
                 for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
                     for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
@@ -61,7 +57,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                         0.0,
                                         0.0,
                                         n_threads,
-                                        stack.rb_mut(),
                                     )
                                 })
                             },
