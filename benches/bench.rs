@@ -28,8 +28,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let b_vec = vec![0.0; k * n];
             let mut c_vec = vec![0.0; m * n];
 
-            let n_threads = rayon::current_num_threads();
-
             for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
                 for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
                     for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
@@ -56,7 +54,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                         rhs_rs as isize,
                                         0.0,
                                         0.0,
-                                        n_threads,
                                     )
                                 })
                             },

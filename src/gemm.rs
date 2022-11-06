@@ -51,7 +51,6 @@ unsafe fn gemm_basic_generic<
     rhs_rs: isize,
     mut alpha: T,
     beta: T,
-    n_threads: usize,
     mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher_zero: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
     dispatcher_one: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
@@ -103,13 +102,6 @@ unsafe fn gemm_basic_generic<
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
     let threading_threshold = 48 * 48 * 256;
-
-    // use a single thread for small workloads
-    let n_threads = if m * nc * kc <= threading_threshold {
-        1
-    } else {
-        n_threads
-    };
 
     let simd_align = CACHELINE_ALIGN;
 
@@ -193,11 +185,14 @@ unsafe fn gemm_basic_generic<
             }
 
             // use a single thread for small workloads
+            #[cfg(feature = "rayon")]
             let n_threads = if m * n_chunk * k_chunk <= threading_threshold {
                 1
             } else {
-                n_threads
+                rayon::current_num_threads()
             };
+            #[cfg(not(feature = "rayon"))]
+            let n_threads = 1;
 
             let func = move |tid| {
                 L2_SLAB.with(|mem| {
@@ -324,12 +319,17 @@ unsafe fn gemm_basic_generic<
                 });
             };
 
+            #[cfg(not(feature = "rayon"))]
+            func(0);
+
+            #[cfg(feature = "rayon")]
             if n_threads <= 1 {
                 func(0);
             } else {
                 use rayon::prelude::*;
                 (0..n_threads).into_par_iter().for_each(func);
             }
+
             alpha.set_one();
             depth_outer += k_chunk;
         }
@@ -358,7 +358,6 @@ macro_rules! gemm_def {
             isize,
             T,
             T,
-            usize,
         );
 
         fn init_gemm_fn() -> GemmTy {
@@ -406,12 +405,18 @@ macro_rules! gemm_def {
             rhs_rs: isize,
             alpha: T,
             beta: T,
-            n_threads: usize,
         ) {
-            GEMM(
-                m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-                alpha, beta, n_threads,
-            )
+            if dst_cs.abs() < dst_rs.abs() {
+                GEMM(
+                    n, m, k, dst, dst_rs, dst_cs, read_dst, rhs, rhs_rs, rhs_cs, lhs, lhs_rs,
+                    lhs_cs, alpha, beta,
+                )
+            } else {
+                GEMM(
+                    m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs,
+                    rhs_rs, alpha, beta,
+                )
+            }
         }
 
         mod scalar {
@@ -437,7 +442,6 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
-                n_threads: usize,
             ) {
                 use microkernel::scalar::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -457,7 +461,6 @@ macro_rules! gemm_def {
                     rhs_rs,
                     alpha,
                     beta,
-                    n_threads,
                     |a, b, c| a * b + c,
                     &[
                         [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
@@ -500,7 +503,6 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
-                n_threads: usize,
             ) {
                 use microkernel::sse::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -520,7 +522,6 @@ macro_rules! gemm_def {
                     rhs_rs,
                     alpha,
                     beta,
-                    n_threads,
                     |a, b, c| a * b + c,
                     &[
                         [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
@@ -563,7 +564,6 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
-                n_threads: usize,
             ) {
                 use microkernel::avx::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -583,7 +583,6 @@ macro_rules! gemm_def {
                     rhs_rs,
                     alpha,
                     beta,
-                    n_threads,
                     |a, b, c| a * b + c,
                     &[
                         [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
@@ -626,7 +625,6 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
-                n_threads: usize,
             ) {
                 use microkernel::fma::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -646,7 +644,6 @@ macro_rules! gemm_def {
                     rhs_rs,
                     alpha,
                     beta,
-                    n_threads,
                     |a, b, c| <$ty>::mul_add(a, b, c),
                     &[
                         [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
@@ -692,7 +689,6 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
-                n_threads: usize,
             ) {
                 use microkernel::avx512f::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -712,7 +708,6 @@ macro_rules! gemm_def {
                     rhs_rs,
                     alpha,
                     beta,
-                    n_threads,
                     |a, b, c| <$ty>::mul_add(a, b, c),
                     &[
                         [
@@ -786,7 +781,6 @@ pub unsafe fn gemm<T>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
-    n_threads: usize,
 ) where
     T: Zero + Send + Sync + 'static,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
@@ -809,7 +803,6 @@ pub unsafe fn gemm<T>(
             rhs_rs,
             *(&alpha as *const T as *const f64),
             *(&beta as *const T as *const f64),
-            n_threads,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f32>() {
         crate::gemm::f32::gemm_basic(
@@ -828,12 +821,11 @@ pub unsafe fn gemm<T>(
             rhs_rs,
             *(&alpha as *const T as *const f32),
             *(&beta as *const T as *const f32),
-            n_threads,
         )
     } else {
         gemm_fallback(
             m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-            alpha, beta, n_threads,
+            alpha, beta,
         )
     }
 }
@@ -855,7 +847,6 @@ pub(crate) unsafe fn gemm_fallback<T>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
-    n_threads: usize,
 ) where
     T: Zero + Send + Sync,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
@@ -865,58 +856,30 @@ pub(crate) unsafe fn gemm_fallback<T>(
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    if n_threads == 1 {
-        (0..m).for_each(|row| {
-            (0..n).for_each(|col| {
-                let mut accum = <T as Zero>::zero();
-                for depth in 0..k {
-                    let lhs = &*lhs
-                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
-                        .0;
-
-                    let rhs = &*rhs
-                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
-                        .0;
-
-                    accum = &accum + &(lhs * rhs);
-                }
-                accum = &accum * &beta;
-
-                let dst = dst
-                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+    (0..m).for_each(|row| {
+        (0..n).for_each(|col| {
+            let mut accum = <T as Zero>::zero();
+            for depth in 0..k {
+                let lhs = &*lhs
+                    .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
                     .0;
-                if read_dst {
-                    accum = &accum + &(&alpha * &*dst);
-                }
-                *dst = accum
-            });
-        });
-    } else {
-        use rayon::prelude::*;
-        (0..m).into_par_iter().for_each(|row| {
-            (0..n).into_par_iter().for_each(|col| {
-                let mut accum = <T as Zero>::zero();
-                for depth in 0..k {
-                    let lhs = &*lhs
-                        .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
-                        .0;
 
-                    let rhs = &*rhs
-                        .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
-                        .0;
-
-                    accum = &accum + &(lhs * rhs);
-                }
-                accum = &accum * &beta;
-
-                let dst = dst
-                    .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+                let rhs = &*rhs
+                    .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
                     .0;
-                if read_dst {
-                    accum = &accum + &(&alpha * &*dst);
-                }
-                *dst = accum
-            });
+
+                accum = &accum + &(lhs * rhs);
+            }
+            accum = &accum * &beta;
+
+            let dst = dst
+                .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
+                .0;
+            if read_dst {
+                accum = &accum + &(&alpha * &*dst);
+            }
+            *dst = accum
         });
-    }
+    });
+    return;
 }

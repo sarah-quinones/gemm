@@ -86,8 +86,6 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
-        let n_threads = 1;
-
         for (m, n, k) in mnks {
             dbg!(m, n, k);
             for alpha in [0.0, 1.0, 2.3] {
@@ -115,7 +113,6 @@ mod tests {
                             1,
                             alpha,
                             beta,
-                            n_threads,
                         );
 
                         gemm::gemm_fallback(
@@ -134,7 +131,6 @@ mod tests {
                             1,
                             alpha,
                             beta,
-                            n_threads,
                         );
                     }
                     for (c, d) in c_vec.iter().zip(d_vec.iter()) {
