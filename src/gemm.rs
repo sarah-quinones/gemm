@@ -766,7 +766,7 @@ mod f64 {
 }
 
 #[inline]
-pub unsafe fn gemm<T>(
+pub unsafe fn gemm<T: 'static>(
     m: usize,
     n: usize,
     k: usize,
@@ -782,11 +782,7 @@ pub unsafe fn gemm<T>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
-) where
-    T: Zero + Send + Sync + 'static,
-    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
-    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
-{
+) {
     if TypeId::of::<T>() == TypeId::of::<f64>() {
         crate::gemm::f64::gemm_basic(
             m,
@@ -824,10 +820,7 @@ pub unsafe fn gemm<T>(
             *(&beta as *const T as *const f32),
         )
     } else {
-        gemm_fallback(
-            m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-            alpha, beta,
-        )
+        unreachable!();
     }
 }
 
