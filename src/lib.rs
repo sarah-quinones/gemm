@@ -12,6 +12,12 @@ mod simd;
 
 pub use crate::gemm::gemm;
 
+pub enum Parallelism {
+    None,
+    #[cfg(feature = "rayon")]
+    Rayon(usize),
+}
+
 pub(crate) struct Ptr<T>(*mut T);
 
 impl<T> Clone for Ptr<T> {
@@ -113,6 +119,10 @@ mod tests {
                             1,
                             alpha,
                             beta,
+                            #[cfg(feature = "rayon")]
+                            Parallelism::Rayon(0),
+                            #[cfg(not(feature = "rayon"))]
+                            Parallelism::None,
                         );
 
                         gemm::gemm_fallback(

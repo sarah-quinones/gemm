@@ -4,7 +4,7 @@ use crate::{
     microkernel::{self, MicroKernelFn},
     pack_operands::{pack_lhs, pack_rhs},
     simd::Simd,
-    x86_feature_detected, Ptr,
+    x86_feature_detected, Parallelism, Ptr,
 };
 use aligned_vec::CACHELINE_ALIGN;
 use core::{any::TypeId, cell::RefCell};
@@ -55,6 +55,7 @@ unsafe fn gemm_basic_generic<
     dispatcher_zero: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
     dispatcher_one: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
     dispatcher_generic: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
+    parallelism: Parallelism,
 ) {
     if m == 0 || n == 0 {
         return;
@@ -182,18 +183,24 @@ unsafe fn gemm_basic_generic<
                 row_outer += m_chunk;
             }
 
-            // use a single thread for small workloads
-
-            #[cfg(feature = "rayon")]
-            let threading_threshold = 48 * 48 * 256;
-            #[cfg(feature = "rayon")]
-            let n_threads = if m * n_chunk * k_chunk <= threading_threshold {
-                1
-            } else {
-                rayon::current_num_threads()
+            let n_threads = match parallelism {
+                Parallelism::None => 1,
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(n_threads) => {
+                    let threading_threshold = 48 * 48 * 256;
+                    if m * n_chunk * k_chunk <= threading_threshold {
+                        1
+                    } else {
+                        if n_threads == 0 {
+                            rayon::current_num_threads()
+                        } else {
+                            n_threads
+                        }
+                    }
+                }
             };
-            #[cfg(not(feature = "rayon"))]
-            let n_threads = 1;
+
+            // use a single thread for small workloads
 
             let func = move |tid| {
                 L2_SLAB.with(|mem| {
@@ -320,15 +327,17 @@ unsafe fn gemm_basic_generic<
                 });
             };
 
-            #[cfg(not(feature = "rayon"))]
-            func(0);
-
-            #[cfg(feature = "rayon")]
-            if n_threads <= 1 {
-                func(0);
-            } else {
-                use rayon::prelude::*;
-                (0..n_threads).into_par_iter().for_each(func);
+            match parallelism {
+                Parallelism::None => func(0),
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(_) => {
+                    if n_threads == 1 {
+                        func(0);
+                    } else {
+                        use rayon::prelude::*;
+                        (0..n_threads).into_par_iter().for_each(func);
+                    }
+                }
             }
 
             alpha.set_one();
@@ -359,6 +368,7 @@ macro_rules! gemm_def {
             isize,
             T,
             T,
+            Parallelism,
         );
 
         fn init_gemm_fn() -> GemmTy {
@@ -406,16 +416,45 @@ macro_rules! gemm_def {
             rhs_rs: isize,
             alpha: T,
             beta: T,
+            parallelism: Parallelism,
         ) {
             if dst_cs.abs() < dst_rs.abs() {
                 GEMM(
-                    n, m, k, dst, dst_rs, dst_cs, read_dst, rhs, rhs_rs, rhs_cs, lhs, lhs_rs,
-                    lhs_cs, alpha, beta,
+                    n,
+                    m,
+                    k,
+                    dst,
+                    dst_rs,
+                    dst_cs,
+                    read_dst,
+                    rhs,
+                    rhs_rs,
+                    rhs_cs,
+                    lhs,
+                    lhs_rs,
+                    lhs_cs,
+                    alpha,
+                    beta,
+                    parallelism,
                 )
             } else {
                 GEMM(
-                    m, n, k, dst, dst_cs, dst_rs, read_dst, lhs, lhs_cs, lhs_rs, rhs, rhs_cs,
-                    rhs_rs, alpha, beta,
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    parallelism,
                 )
             }
         }
@@ -443,6 +482,7 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                parallelism: Parallelism,
             ) {
                 use microkernel::scalar::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -475,6 +515,7 @@ macro_rules! gemm_def {
                         [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
                         [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
                     ],
+                    parallelism,
                 );
             }
         }
@@ -504,6 +545,7 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                parallelism: Parallelism,
             ) {
                 use microkernel::sse::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -536,6 +578,7 @@ macro_rules! gemm_def {
                         [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
                         [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
                     ],
+                    parallelism,
                 );
             }
         }
@@ -565,6 +608,7 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                parallelism: Parallelism,
             ) {
                 use microkernel::avx::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -597,6 +641,7 @@ macro_rules! gemm_def {
                         [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
                         [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
                     ],
+                    parallelism,
                 );
             }
         }
@@ -626,6 +671,7 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                parallelism: Parallelism,
             ) {
                 use microkernel::fma::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -661,6 +707,7 @@ macro_rules! gemm_def {
                         [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
                         [x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>],
                     ],
+                    parallelism,
                 );
             }
         }
@@ -690,6 +737,7 @@ macro_rules! gemm_def {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                parallelism: Parallelism,
             ) {
                 use microkernel::avx512f::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
@@ -752,6 +800,7 @@ macro_rules! gemm_def {
                             x3x7::<2>, x3x8::<2>,
                         ],
                     ],
+                    parallelism,
                 );
             }
         }
@@ -787,6 +836,7 @@ pub unsafe fn gemm<T: 'static>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
+    parallelism: Parallelism,
 ) {
     if TypeId::of::<T>() == TypeId::of::<f64>() {
         crate::gemm::f64::gemm_basic(
@@ -805,6 +855,7 @@ pub unsafe fn gemm<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f64),
             *(&beta as *const T as *const f64),
+            parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f32>() {
         crate::gemm::f32::gemm_basic(
@@ -823,6 +874,7 @@ pub unsafe fn gemm<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f32),
             *(&beta as *const T as *const f32),
+            parallelism,
         )
     } else {
         unreachable!();
@@ -830,6 +882,7 @@ pub unsafe fn gemm<T: 'static>(
 }
 
 #[inline(never)]
+#[cfg(test)]
 pub(crate) unsafe fn gemm_fallback<T>(
     m: usize,
     n: usize,
