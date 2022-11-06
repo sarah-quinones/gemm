@@ -101,8 +101,6 @@ unsafe fn gemm_basic_generic<
 
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
-    let threading_threshold = 48 * 48 * 256;
-
     let simd_align = CACHELINE_ALIGN;
 
     let packed_rhs_stride = kc * NR;
@@ -185,6 +183,9 @@ unsafe fn gemm_basic_generic<
             }
 
             // use a single thread for small workloads
+
+            #[cfg(feature = "rayon")]
+            let threading_threshold = 48 * 48 * 256;
             #[cfg(feature = "rayon")]
             let n_threads = if m * n_chunk * k_chunk <= threading_threshold {
                 1
