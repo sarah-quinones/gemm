@@ -765,6 +765,11 @@ mod f64 {
     gemm_def!(f64, 1);
 }
 
+/// dst := alpha×dst + beta×lhs×rhs
+///
+/// # Panics
+///
+/// Panics if `T` is not `f32` or `f64`
 #[inline]
 pub unsafe fn gemm<T: 'static>(
     m: usize,
