@@ -1147,6 +1147,8 @@ pub mod neon {
     }
     pub mod f64 {
         use super::super::v128_common::f64::*;
+        use core::arch::aarch64::*;
+        use core::mem::transmute;
 
         #[inline(always)]
         pub unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
