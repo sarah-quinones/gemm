@@ -1,6 +1,27 @@
 #![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
+#![allow(unused_macros)]
+
+#[cfg(not(feature = "std"))]
+macro_rules! feature_detected {
+    ($tt: tt) => {
+        cfg!(feature = $tt)
+    };
+}
+
+#[cfg(all(feature = "std", any(target_arch = "x86", target_arch = "x86_64")))]
+macro_rules! feature_detected {
+    ($tt: tt) => {
+        ::std::arch::is_x86_feature_detected!($tt)
+    };
+}
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+macro_rules! feature_detected {
+    ($tt: tt) => {
+        ::std::arch::is_aarch64_feature_detected!($tt)
+    };
+}
 
 mod cache;
 mod gemm;
@@ -40,22 +61,6 @@ impl<T> Ptr<T> {
         Ptr::<T>(self.0.wrapping_add(offset))
     }
 }
-
-#[cfg(feature = "std")]
-macro_rules! x86_feature_detected {
-    ($tt: tt) => {
-        is_x86_feature_detected!($tt)
-    };
-}
-
-#[cfg(not(feature = "std"))]
-macro_rules! x86_feature_detected {
-    ($tt: tt) => {
-        cfg!(feature = $tt)
-    };
-}
-
-pub(crate) use x86_feature_detected;
 
 #[cfg(test)]
 mod tests {

@@ -4,13 +4,50 @@ use crate::{
     microkernel::{self, MicroKernelFn},
     pack_operands::{pack_lhs, pack_rhs},
     simd::Simd,
-    x86_feature_detected, Parallelism, Ptr,
+    Parallelism, Ptr,
 };
-use aligned_vec::CACHELINE_ALIGN;
 use core::{any::TypeId, cell::RefCell};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
 use num_traits::{One, Zero};
+
+// https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
+pub const CACHELINE_ALIGN: usize = {
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+    ))]
+    {
+        128
+    }
+    #[cfg(any(
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+    ))]
+    {
+        32
+    }
+    #[cfg(target_arch = "s390x")]
+    {
+        256
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+    )))]
+    {
+        64
+    }
+};
 
 thread_local! {
     static L2_SLAB: RefCell<GlobalMemBuffer> = RefCell::new(GlobalMemBuffer::new(
@@ -110,6 +147,13 @@ unsafe fn gemm_basic_generic<
     let dst = Ptr(dst);
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
+
+    // on aarch64-neon, we prefer a row major rhs
+    #[cfg(target_arch = "aarch64")]
+    let do_pack_rhs = m > 8 * MR && rhs_cs != 1;
+
+    // no need to pack if the lhs is already contiguous-ish
+    #[cfg(not(target_arch = "aarch64"))]
     let do_pack_rhs = m > 8 * MR && rhs_rs.abs() != 1;
 
     let mut mem = if do_pack_rhs {
@@ -292,22 +336,24 @@ unsafe fn gemm_basic_generic<
                                     m_chunk_inner,
                                     n_chunk_inner,
                                     k_chunk,
-                                    dst,
+                                    dst.0,
                                     if do_pack_lhs {
-                                        packed_lhs.wrapping_add(i * packed_lhs_stride)
+                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
                                     } else {
                                         lhs.wrapping_offset(
                                             (row_outer + row_inner) as isize * lhs_rs
                                                 + depth_outer as isize * lhs_cs,
                                         )
+                                        .0
                                     },
                                     if do_pack_rhs {
-                                        packed_rhs.wrapping_add(j * packed_rhs_stride)
+                                        packed_rhs.wrapping_add(j * packed_rhs_stride).0
                                     } else {
                                         rhs.wrapping_offset(
                                             depth_outer as isize * rhs_rs
                                                 + (col_outer + col_inner) as isize * rhs_cs,
                                         )
+                                        .0
                                     },
                                     dst_cs,
                                     dst_rs,
@@ -375,21 +421,30 @@ macro_rules! gemm_def {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
                 #[cfg(feature = "nightly")]
-                if x86_feature_detected!("avx512f") {
+                if feature_detected!("avx512f") {
                     return avx512f::gemm_basic;
                 }
-                if x86_feature_detected!("fma") {
+                if feature_detected!("fma") {
                     fma::gemm_basic
-                } else if x86_feature_detected!("avx") {
+                } else if feature_detected!("avx") {
                     avx::gemm_basic
-                } else if x86_feature_detected!("sse") {
+                } else if feature_detected!("sse") {
                     sse::gemm_basic
                 } else {
                     scalar::gemm_basic
                 }
             }
 
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            #[cfg(target_arch = "aarch64")]
+            {
+                if feature_detected!("neon") {
+                    neon::gemm_basic
+                } else {
+                    scalar::gemm_basic
+                }
+            }
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 scalar::gemm_basic
             }
@@ -742,6 +797,99 @@ macro_rules! gemm_def {
                 use microkernel::avx512f::$ty::*;
                 gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
                     crate::simd::Avx512f,
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    |a, b, c| <$ty>::mul_add(a, b, c),
+                    &[
+                        [
+                            x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>, x1x5::<0>, x1x6::<0>,
+                            x1x7::<0>, x1x8::<0>,
+                        ],
+                        [
+                            x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>, x2x5::<0>, x2x6::<0>,
+                            x2x7::<0>, x2x8::<0>,
+                        ],
+                        [
+                            x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>, x3x5::<0>, x3x6::<0>,
+                            x3x7::<0>, x3x8::<0>,
+                        ],
+                    ],
+                    &[
+                        [
+                            x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>, x1x5::<1>, x1x6::<1>,
+                            x1x7::<1>, x1x8::<1>,
+                        ],
+                        [
+                            x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>, x2x5::<1>, x2x6::<1>,
+                            x2x7::<1>, x2x8::<1>,
+                        ],
+                        [
+                            x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>, x3x5::<1>, x3x6::<1>,
+                            x3x7::<1>, x3x8::<1>,
+                        ],
+                    ],
+                    &[
+                        [
+                            x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>, x1x5::<2>, x1x6::<2>,
+                            x1x7::<2>, x1x8::<2>,
+                        ],
+                        [
+                            x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>, x2x5::<2>, x2x6::<2>,
+                            x2x7::<2>, x2x8::<2>,
+                        ],
+                        [
+                            x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>, x3x5::<2>, x3x6::<2>,
+                            x3x7::<2>, x3x8::<2>,
+                        ],
+                    ],
+                    parallelism,
+                );
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        mod neon {
+            use super::*;
+            const N: usize = 2 * $multiplier;
+            const MR: usize = 3 * N;
+            const NR: usize = 8;
+
+            #[target_feature(enable = "neon")]
+            #[inline(never)]
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                parallelism: Parallelism,
+            ) {
+                use microkernel::neon::$ty::*;
+                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
+                    crate::simd::Scalar,
                     m,
                     n,
                     k,

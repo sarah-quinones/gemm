@@ -1,20 +1,31 @@
-use crate::Ptr;
-
-pub(crate) type MicroKernelFn<T> =
-    unsafe fn(usize, usize, usize, Ptr<T>, Ptr<T>, Ptr<T>, isize, isize, isize, isize, isize, T, T);
+pub(crate) type MicroKernelFn<T> = unsafe fn(
+    usize,
+    usize,
+    usize,
+    *mut T,
+    *const T,
+    *const T,
+    isize,
+    isize,
+    isize,
+    isize,
+    isize,
+    T,
+    T,
+);
 
 macro_rules! microkernel {
-    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
+    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
-        pub(crate) unsafe fn $name<const ALPHA: u8>(
+        pub unsafe fn $name<const ALPHA: u8>(
             m: usize,
             n: usize,
             k: usize,
-            dst: $crate::Ptr<T>,
-            packed_lhs: $crate::Ptr<T>,
-            packed_rhs: $crate::Ptr<T>,
+            dst: *mut T,
+            mut packed_lhs: *const T,
+            mut packed_rhs: *const T,
             dst_cs: isize,
             dst_rs: isize,
             lhs_cs: isize,
@@ -24,10 +35,6 @@ macro_rules! microkernel {
             beta: T,
         ) {
             assert!(ALPHA <= 2);
-
-            let dst = dst.0;
-            let mut packed_lhs = packed_lhs.0;
-            let mut packed_rhs = packed_rhs.0;
 
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
@@ -43,8 +50,8 @@ macro_rules! microkernel {
                 rhs_rs: isize,
                 rhs_cs: isize,
                 accum: *mut Pack,
-                lhs: *mut ::core::mem::MaybeUninit<Pack>,
-                rhs: *mut ::core::mem::MaybeUninit<Pack>,
+                lhs: *mut Pack,
+                rhs: *mut Pack,
             }
 
             impl KernelIter {
@@ -54,80 +61,168 @@ macro_rules! microkernel {
                     let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {
-                        (*self.lhs.add(M_ITER))
-                            .write((packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned());
+                        *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
                     });
 
                     seq_macro::seq!(N_ITER in 0..$nr {
-                        (*self.rhs).write(splat(*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs)));
+                        *self.rhs = splat(*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs));
                         let accum = self.accum.add(N_ITER * $mr_div_n);
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let accum = &mut *accum.add(M_ITER);
                             *accum = mul_add(
-                                (*self.lhs.add(M_ITER)).assume_init(),
-                                (*self.rhs).assume_init(),
+                                *self.lhs.add(M_ITER),
+                                *self.rhs,
                                 *accum,
                             );
                         }});
                     });
                 }
+
+                $(
+                    #[inline(always)]
+                    unsafe fn execute_neon(self, iter: usize) {
+                        debug_assert_eq!(self.rhs_cs, 1);
+                        let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
+                        let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
+
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {
+                            *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                        });
+
+                        seq_macro::seq!(N_ITER0 in 0..$nr_div_n {
+                            *self.rhs = (packed_rhs.wrapping_offset(N_ITER0 * $n) as *const Pack).read_unaligned();
+
+                            seq_macro::seq!(N_ITER1 in 0..$n {{
+                                const N_ITER: usize = N_ITER0 * $n + N_ITER1;
+                                let accum = self.accum.add(N_ITER * $mr_div_n);
+                                seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                    let accum = &mut *accum.add(M_ITER);
+                                    *accum = mul_add_lane::<N_ITER1>(
+                                        *self.lhs.add(M_ITER),
+                                        *self.rhs,
+                                        *accum,
+                                        );
+                                }});
+                            }});
+                        });
+                    }
+                )?
             }
 
             let k_unroll = k / 4;
             let k_leftover = k % 4;
 
-            let mut depth = k_unroll;
+            loop {
+                $(
+                let _ = $nr_div_n;
+                if rhs_cs == 1 {
+                    let mut depth = k_unroll;
+                    if depth != 0 {
+                        loop {
+                            let iter = KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs: lhs.as_mut_ptr() as _,
+                                rhs: &mut rhs as *mut _ as _,
+                            };
 
-            if depth != 0 {
-                loop {
-                    let iter = KernelIter {
-                        packed_lhs,
-                        packed_rhs,
-                        lhs_cs,
-                        rhs_rs,
-                        rhs_cs,
-                        accum,
-                        lhs: lhs.as_mut_ptr(),
-                        rhs: &mut rhs,
-                    };
+                            seq_macro::seq!(UNROLL_ITER in 0..4 {
+                                iter.execute_neon(UNROLL_ITER);
+                            });
 
-                    seq_macro::seq!(UNROLL_ITER in 0..4 {
-                        iter.execute(UNROLL_ITER);
-                    });
+                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
 
-                    packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                    packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    depth = k_leftover;
+                    if depth != 0 {
+                        loop {
+                            KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs: lhs.as_mut_ptr() as _,
+                                rhs: &mut rhs as *mut _ as _,
+                            }
+                            .execute_neon(0);
 
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
+                            packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                )?
+
+                let mut depth = k_unroll;
+                if depth != 0 {
+                    loop {
+                        let iter = KernelIter {
+                            packed_lhs,
+                            packed_rhs,
+                            lhs_cs,
+                            rhs_rs,
+                            rhs_cs,
+                            accum,
+                            lhs: lhs.as_mut_ptr() as _,
+                            rhs: &mut rhs as *mut _ as _,
+                        };
+
+                        seq_macro::seq!(UNROLL_ITER in 0..4 {
+                            iter.execute(UNROLL_ITER);
+                        });
+
+                        packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                        packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
                     }
                 }
-            }
+                depth = k_leftover;
+                if depth != 0 {
+                    loop {
+                        KernelIter {
+                            packed_lhs,
+                            packed_rhs,
+                            lhs_cs,
+                            rhs_rs,
+                            rhs_cs,
+                            accum,
+                            lhs: lhs.as_mut_ptr() as _,
+                            rhs: &mut rhs as *mut _ as _,
+                        }
+                        .execute(0);
 
-            depth = k_leftover;
-            if depth != 0 {
-                loop {
-                    KernelIter {
-                        packed_lhs,
-                        packed_rhs,
-                        lhs_cs,
-                        rhs_rs,
-                        rhs_cs,
-                        accum,
-                        lhs: lhs.as_mut_ptr(),
-                        rhs: &mut rhs,
-                    }
-                    .execute(0);
+                        packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                        packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
 
-                    packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
-                    packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
-
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
                     }
                 }
+                break;
             }
 
             if m == $mr_div_n * N && n == $nr {
@@ -924,5 +1019,184 @@ pub mod avx512f {
         microkernel!(["avx512f"], x3x6, 3, 6);
         microkernel!(["avx512f"], x3x7, 3, 7);
         microkernel!(["avx512f"], x3x8, 3, 8);
+    }
+}
+
+#[allow(dead_code)]
+mod v128_common {
+    pub mod f32 {
+        use core::mem::MaybeUninit;
+
+        pub type T = f32;
+        pub const N: usize = 4;
+        pub type Pack = [T; N];
+
+        #[inline(always)]
+        pub unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..4 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        pub unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..4 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        pub unsafe fn splat(value: T) -> Pack {
+            [value, value, value, value]
+        }
+    }
+
+    pub mod f64 {
+        use core::mem::MaybeUninit;
+
+        pub type T = f64;
+        pub const N: usize = 2;
+        pub type Pack = [T; N];
+
+        #[inline(always)]
+        pub unsafe fn gather(base: *const T, stride: isize) -> Pack {
+            let mut p = MaybeUninit::<Pack>::uninit();
+            let ptr = p.as_mut_ptr() as *mut T;
+            seq_macro::seq!(ITER in 0..2 {
+                *ptr.add(ITER) = *base.offset(ITER * stride);
+            });
+            p.assume_init()
+        }
+
+        #[inline(always)]
+        pub unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
+            let ptr = p.as_ptr();
+            seq_macro::seq!(ITER in 0..2 {
+                *base.offset(ITER * stride) = *ptr.add(ITER);
+            });
+        }
+
+        #[inline(always)]
+        pub unsafe fn splat(value: T) -> Pack {
+            [value, value]
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub mod neon {
+    pub mod f32 {
+        use super::super::v128_common::f32::*;
+        use core::arch::aarch64::*;
+        use core::mem::transmute;
+
+        #[inline(always)]
+        pub unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vmulq_f32(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vaddq_f32(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_f32(transmute(c), transmute(a), transmute(b)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add_lane<const LANE: i32>(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_laneq_f32::<LANE>(
+                transmute(c),
+                transmute(a),
+                transmute(b),
+            ))
+        }
+
+        microkernel!(["neon"], x1x1, 1, 1);
+        microkernel!(["neon"], x1x2, 1, 2);
+        microkernel!(["neon"], x1x3, 1, 3);
+        microkernel!(["neon"], x1x4, 1, 4, 1, 4);
+        microkernel!(["neon"], x1x5, 1, 5);
+        microkernel!(["neon"], x1x6, 1, 6);
+        microkernel!(["neon"], x1x7, 1, 7);
+        microkernel!(["neon"], x1x8, 1, 8, 2, 4);
+
+        microkernel!(["neon"], x2x1, 2, 1);
+        microkernel!(["neon"], x2x2, 2, 2);
+        microkernel!(["neon"], x2x3, 2, 3);
+        microkernel!(["neon"], x2x4, 2, 4, 1, 4);
+        microkernel!(["neon"], x2x5, 2, 5);
+        microkernel!(["neon"], x2x6, 2, 6);
+        microkernel!(["neon"], x2x7, 2, 7);
+        microkernel!(["neon"], x2x8, 2, 8, 2, 4);
+
+        microkernel!(["neon"], x3x1, 3, 1);
+        microkernel!(["neon"], x3x2, 3, 2);
+        microkernel!(["neon"], x3x3, 3, 3);
+        microkernel!(["neon"], x3x4, 3, 4, 1, 4);
+        microkernel!(["neon"], x3x5, 3, 5);
+        microkernel!(["neon"], x3x6, 3, 6);
+        microkernel!(["neon"], x3x7, 3, 7);
+        microkernel!(["neon"], x3x8, 3, 8, 2, 4);
+    }
+    pub mod f64 {
+        use super::super::v128_common::f64::*;
+
+        #[inline(always)]
+        pub unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vmulq_f64(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vaddq_f64(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_f64(transmute(c), transmute(a), transmute(b)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add_lane<const LANE: i32>(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_laneq_f64::<LANE>(
+                transmute(c),
+                transmute(a),
+                transmute(b),
+            ))
+        }
+
+        microkernel!(["neon"], x1x1, 1, 1);
+        microkernel!(["neon"], x1x2, 1, 2, 1, 2);
+        microkernel!(["neon"], x1x3, 1, 3);
+        microkernel!(["neon"], x1x4, 1, 4, 2, 2);
+        microkernel!(["neon"], x1x5, 1, 5);
+        microkernel!(["neon"], x1x6, 1, 6, 3, 2);
+        microkernel!(["neon"], x1x7, 1, 7);
+        microkernel!(["neon"], x1x8, 1, 8, 4, 2);
+
+        microkernel!(["neon"], x2x1, 2, 1);
+        microkernel!(["neon"], x2x2, 2, 2, 1, 2);
+        microkernel!(["neon"], x2x3, 2, 3);
+        microkernel!(["neon"], x2x4, 2, 4, 2, 2);
+        microkernel!(["neon"], x2x5, 2, 5);
+        microkernel!(["neon"], x2x6, 2, 6, 3, 2);
+        microkernel!(["neon"], x2x7, 2, 7);
+        microkernel!(["neon"], x2x8, 2, 8, 4, 2);
+
+        microkernel!(["neon"], x3x1, 3, 1);
+        microkernel!(["neon"], x3x2, 3, 2, 1, 2);
+        microkernel!(["neon"], x3x3, 3, 3);
+        microkernel!(["neon"], x3x4, 3, 4, 2, 2);
+        microkernel!(["neon"], x3x5, 3, 5);
+        microkernel!(["neon"], x3x6, 3, 6, 3, 2);
+        microkernel!(["neon"], x3x7, 3, 7);
+        microkernel!(["neon"], x3x8, 3, 8, 4, 2);
     }
 }

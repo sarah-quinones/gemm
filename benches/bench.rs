@@ -32,7 +32,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
                     c.bench_function(
                         &format!(
-                            "{}{}{}-gemm-{}×{}×{}",
+                            "f64-{}{}{}-gemm-{}×{}×{}",
                             dst_label, lhs_label, rhs_label, m, n, k
                         ),
                         |b| {
@@ -53,6 +53,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                     rhs_rs as isize,
                                     0.0_f64,
                                     0.0_f64,
+                                    gemm::Parallelism::None,
                                 )
                             })
                         },
@@ -64,7 +65,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let a_mat = DMatrix::<f64>::zeros(m, k);
         let b_mat = DMatrix::<f64>::zeros(k, n);
         let mut c_mat = DMatrix::<f64>::zeros(m, n);
-        c.bench_function(&format!("nalg-{}×{}×{}", m, n, k), |b| {
+        c.bench_function(&format!("f64-nalg-{}×{}×{}", m, n, k), |b| {
             b.iter(|| c_mat = &a_mat * &b_mat)
         });
     }
@@ -79,7 +80,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
                     c.bench_function(
                         &format!(
-                            "{}{}{}-gemm-{}×{}×{}",
+                            "f32-{}{}{}-gemm-{}×{}×{}",
                             dst_label, lhs_label, rhs_label, m, n, k
                         ),
                         |b| {
@@ -100,6 +101,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                     rhs_rs as isize,
                                     0.0_f32,
                                     0.0_f32,
+                                    gemm::Parallelism::None,
                                 )
                             })
                         },
@@ -111,7 +113,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let a_mat = DMatrix::<f32>::zeros(m, k);
         let b_mat = DMatrix::<f32>::zeros(k, n);
         let mut c_mat = DMatrix::<f32>::zeros(m, n);
-        c.bench_function(&format!("nalg-{}×{}×{}", m, n, k), |b| {
+        c.bench_function(&format!("f32-nalg-{}×{}×{}", m, n, k), |b| {
             b.iter(|| c_mat = &a_mat * &b_mat)
         });
     }
