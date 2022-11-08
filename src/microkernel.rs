@@ -14,6 +14,87 @@ pub(crate) type MicroKernelFn<T> = unsafe fn(
     T,
 );
 
+// microkernel_fn_array!{
+// [ a, b, c, ],
+// [ d, e, f, ],
+// }
+//
+// expands to
+// pub const UKR: [[[MicroKernelFn; 3]; 2]; 3] = [
+// [
+// [ a::<0>, b::<0>, c::<0>, ],
+// [ d::<0>, e::<0>, f::<0>, ],
+// ],
+// [
+// [ a::<1>, b::<1>, c::<1>, ],
+// [ d::<1>, e::<1>, f::<1>, ],
+// ],
+// [
+// [ a::<2>, b::<2>, c::<2>, ],
+// [ d::<2>, e::<2>, f::<2>, ],
+// ],
+// ]
+macro_rules! __one {
+    (
+        $tt: tt
+    ) => {
+        1
+    };
+}
+
+macro_rules! __first {
+    (
+        $first: tt, $($rest: tt,)*
+    ) => {
+        $first
+    };
+}
+
+macro_rules! __microkernel_fn_array_helper {
+    (
+        [ $($tt: tt,)* ]
+    ) => {
+        {
+            let mut count = 0_usize;
+            $(count += __one!($tt);)*
+            count
+        }
+    }
+}
+
+macro_rules! __microkernel_fn_array_helper_nr {
+    ($([
+       $($ukr: ident,)*
+    ],)*) => {
+        {
+            let counts = [$({
+                let mut count = 0_usize;
+                $(count += __one!($ukr);)*
+                count
+            },)*];
+
+            counts[0]
+        }
+    }
+}
+
+macro_rules! microkernel_fn_array {
+    ($([
+       $($ukr: ident,)*
+    ],)*) => {
+       pub const MR_DIV_N: usize =
+           __microkernel_fn_array_helper!([$([$($ukr,)*],)*]);
+       pub const NR: usize =
+           __microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
+
+        pub const UKR: [[[super::super::MicroKernelFn<T>; NR]; MR_DIV_N]; 3] = [
+            [ $([$($ukr::<0>,)*]),* ],
+            [ $([$($ukr::<1>,)*]),* ],
+            [ $([$($ukr::<2>,)*]),* ],
+        ];
+    };
+}
+
 macro_rules! microkernel {
     ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
         #[inline]
@@ -403,6 +484,11 @@ pub mod scalar {
         microkernel!(, x2x2, 2, 2);
         microkernel!(, x2x3, 2, 3);
         microkernel!(, x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 
     pub mod f64 {
@@ -459,6 +545,11 @@ pub mod scalar {
         microkernel!(, x2x2, 2, 2);
         microkernel!(, x2x3, 2, 3);
         microkernel!(, x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 }
 
@@ -523,6 +614,11 @@ pub mod sse {
         microkernel!(["sse"], x2x2, 2, 2);
         microkernel!(["sse"], x2x3, 2, 3);
         microkernel!(["sse"], x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 
     pub mod f64 {
@@ -584,6 +680,11 @@ pub mod sse {
         microkernel!(["sse"], x2x2, 2, 2);
         microkernel!(["sse"], x2x3, 2, 3);
         microkernel!(["sse"], x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 }
 
@@ -648,6 +749,11 @@ pub mod avx {
         microkernel!(["avx"], x2x2, 2, 2);
         microkernel!(["avx"], x2x3, 2, 3);
         microkernel!(["avx"], x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 
     pub mod f64 {
@@ -709,6 +815,11 @@ pub mod avx {
         microkernel!(["avx"], x2x2, 2, 2);
         microkernel!(["avx"], x2x3, 2, 3);
         microkernel!(["avx"], x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
     }
 }
 
@@ -778,6 +889,12 @@ pub mod fma {
         microkernel!(["fma"], x3x2, 3, 2);
         microkernel!(["fma"], x3x3, 3, 3);
         microkernel!(["fma"], x3x4, 3, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+            [x3x1, x3x2, x3x3, x3x4,],
+        }
     }
 
     pub mod f64 {
@@ -844,6 +961,12 @@ pub mod fma {
         microkernel!(["fma"], x3x2, 3, 2);
         microkernel!(["fma"], x3x3, 3, 3);
         microkernel!(["fma"], x3x4, 3, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+            [x3x1, x3x2, x3x3, x3x4,],
+        }
     }
 }
 
@@ -925,6 +1048,12 @@ pub mod avx512f {
         microkernel!(["avx512f"], x3x6, 3, 6);
         microkernel!(["avx512f"], x3x7, 3, 7);
         microkernel!(["avx512f"], x3x8, 3, 8);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
     }
 
     pub mod f64 {
@@ -1019,6 +1148,12 @@ pub mod avx512f {
         microkernel!(["avx512f"], x3x6, 3, 6);
         microkernel!(["avx512f"], x3x7, 3, 7);
         microkernel!(["avx512f"], x3x8, 3, 8);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
     }
 }
 
@@ -1144,6 +1279,12 @@ pub mod neon {
         microkernel!(["neon"], x3x6, 3, 6);
         microkernel!(["neon"], x3x7, 3, 7);
         microkernel!(["neon"], x3x8, 3, 8, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
     }
     pub mod f64 {
         use super::super::v128_common::f64::*;
@@ -1200,5 +1341,11 @@ pub mod neon {
         microkernel!(["neon"], x3x6, 3, 6, 3, 2);
         microkernel!(["neon"], x3x7, 3, 7);
         microkernel!(["neon"], x3x8, 3, 8, 4, 2);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
     }
 }

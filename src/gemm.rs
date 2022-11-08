@@ -76,22 +76,22 @@ unsafe fn gemm_basic_generic<
     m: usize,
     n: usize,
     k: usize,
-    mut dst: *mut T,
-    mut dst_cs: isize,
-    mut dst_rs: isize,
+    dst: *mut T,
+    dst_cs: isize,
+    dst_rs: isize,
     read_dst: bool,
-    mut lhs: *const T,
+    lhs: *const T,
     lhs_cs: isize,
-    mut lhs_rs: isize,
-    mut rhs: *const T,
-    mut rhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
     rhs_rs: isize,
     mut alpha: T,
     beta: T,
     mul_add: impl Copy + Fn(T, T, T) -> T,
-    dispatcher_zero: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
-    dispatcher_one: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
-    dispatcher_generic: &'static [[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher_zero: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher_one: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher_generic: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
     parallelism: Parallelism,
 ) {
     if m == 0 || n == 0 {
@@ -99,20 +99,6 @@ unsafe fn gemm_basic_generic<
     }
     if !read_dst {
         alpha.set_zero();
-    }
-
-    if dst_rs < 0 {
-        dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
-        dst_rs = -dst_rs;
-        lhs = lhs.wrapping_offset((m - 1) as isize * lhs_rs);
-        lhs_rs = -lhs_rs;
-    }
-
-    if dst_cs < 0 {
-        dst = dst.wrapping_offset((n - 1) as isize * dst_cs);
-        dst_cs = -dst_cs;
-        rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);
-        rhs_cs = -rhs_cs;
     }
 
     if k <= 2 {
@@ -148,9 +134,10 @@ unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    // on aarch64-neon, we prefer a row major rhs
+    // on aarch64-neon, we always pack beyond a certain size, since the microkernel can use the
+    // contiguity of the RHS with `vfmaq_laneq_[f32|f64]`
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = m > 8 * MR && rhs_cs != 1;
+    let do_pack_rhs = m > 8 * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
@@ -393,6 +380,60 @@ unsafe fn gemm_basic_generic<
     }
 }
 
+macro_rules! __inject_mod {
+    ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
+        mod $module {
+            use super::*;
+            use microkernel::$module::$ty::*;
+            const N: usize = $N;
+
+            #[inline(never)]
+            pub unsafe fn gemm_basic(
+                m: usize,
+                n: usize,
+                k: usize,
+                dst: *mut T,
+                dst_cs: isize,
+                dst_rs: isize,
+                read_dst: bool,
+                lhs: *const T,
+                lhs_cs: isize,
+                lhs_rs: isize,
+                rhs: *const T,
+                rhs_cs: isize,
+                rhs_rs: isize,
+                alpha: T,
+                beta: T,
+                parallelism: Parallelism,
+            ) {
+                gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                    crate::simd::$simd,
+                    m,
+                    n,
+                    k,
+                    dst,
+                    dst_cs,
+                    dst_rs,
+                    read_dst,
+                    lhs,
+                    lhs_cs,
+                    lhs_rs,
+                    rhs,
+                    rhs_cs,
+                    rhs_rs,
+                    alpha,
+                    beta,
+                    |a, b, c| a * b + c,
+                    &UKR[0],
+                    &UKR[1],
+                    &UKR[2],
+                    parallelism,
+                );
+            }
+        }
+    };
+}
+
 macro_rules! gemm_def {
     ($ty: tt, $multiplier: expr) => {
         use super::*;
@@ -473,485 +514,39 @@ macro_rules! gemm_def {
             beta: T,
             parallelism: Parallelism,
         ) {
-            if dst_cs.abs() < dst_rs.abs() {
-                GEMM(
-                    n,
-                    m,
-                    k,
-                    dst,
-                    dst_rs,
-                    dst_cs,
-                    read_dst,
-                    rhs,
-                    rhs_rs,
-                    rhs_cs,
-                    lhs,
-                    lhs_rs,
-                    lhs_cs,
-                    alpha,
-                    beta,
-                    parallelism,
-                )
-            } else {
-                GEMM(
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    parallelism,
-                )
-            }
+            GEMM(
+                m,
+                n,
+                k,
+                dst,
+                dst_cs,
+                dst_rs,
+                read_dst,
+                lhs,
+                lhs_cs,
+                lhs_rs,
+                rhs,
+                rhs_cs,
+                rhs_rs,
+                alpha,
+                beta,
+                parallelism,
+            )
         }
 
-        mod scalar {
-            use super::*;
-            const N: usize = 1;
-            const MR: usize = 2 * N;
-            const NR: usize = 4;
-
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::scalar::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Scalar,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| a * b + c,
-                    &[
-                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
-                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
-                    ],
-                    &[
-                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
-                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
-                    ],
-                    &[
-                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
-                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
-                    ],
-                    parallelism,
-                );
-            }
-        }
+        __inject_mod!(scalar, $ty, 1, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        mod sse {
-            use super::*;
-            const N: usize = 2 * $multiplier;
-            const MR: usize = 2 * N;
-            const NR: usize = 4;
-
-            #[target_feature(enable = "sse")]
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::sse::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Sse,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| a * b + c,
-                    &[
-                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
-                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
-                    ],
-                    &[
-                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
-                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
-                    ],
-                    &[
-                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
-                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
-                    ],
-                    parallelism,
-                );
-            }
-        }
-
+        __inject_mod!(sse, $ty, 2 * $multiplier, Sse);
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        mod avx {
-            use super::*;
-            const N: usize = 4 * $multiplier;
-            const MR: usize = 2 * N;
-            const NR: usize = 4;
-
-            #[target_feature(enable = "avx")]
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::avx::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Avx,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| a * b + c,
-                    &[
-                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
-                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
-                    ],
-                    &[
-                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
-                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
-                    ],
-                    &[
-                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
-                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
-                    ],
-                    parallelism,
-                );
-            }
-        }
-
+        __inject_mod!(avx, $ty, 4 * $multiplier, Avx);
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        mod fma {
-            use super::*;
-            const N: usize = 4 * $multiplier;
-            const MR: usize = 3 * N;
-            const NR: usize = 4;
-
-            #[target_feature(enable = "fma")]
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::fma::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Fma,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| <$ty>::mul_add(a, b, c),
-                    &[
-                        [x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>],
-                        [x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>],
-                        [x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>],
-                    ],
-                    &[
-                        [x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>],
-                        [x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>],
-                        [x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>],
-                    ],
-                    &[
-                        [x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>],
-                        [x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>],
-                        [x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>],
-                    ],
-                    parallelism,
-                );
-            }
-        }
-
+        __inject_mod!(fma, $ty, 4 * $multiplier, Fma);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        mod avx512f {
-            use super::*;
-            const N: usize = 8 * $multiplier;
-            const MR: usize = 3 * N;
-            const NR: usize = 8;
-
-            #[target_feature(enable = "avx512f")]
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::avx512f::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Avx512f,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| <$ty>::mul_add(a, b, c),
-                    &[
-                        [
-                            x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>, x1x5::<0>, x1x6::<0>,
-                            x1x7::<0>, x1x8::<0>,
-                        ],
-                        [
-                            x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>, x2x5::<0>, x2x6::<0>,
-                            x2x7::<0>, x2x8::<0>,
-                        ],
-                        [
-                            x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>, x3x5::<0>, x3x6::<0>,
-                            x3x7::<0>, x3x8::<0>,
-                        ],
-                    ],
-                    &[
-                        [
-                            x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>, x1x5::<1>, x1x6::<1>,
-                            x1x7::<1>, x1x8::<1>,
-                        ],
-                        [
-                            x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>, x2x5::<1>, x2x6::<1>,
-                            x2x7::<1>, x2x8::<1>,
-                        ],
-                        [
-                            x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>, x3x5::<1>, x3x6::<1>,
-                            x3x7::<1>, x3x8::<1>,
-                        ],
-                    ],
-                    &[
-                        [
-                            x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>, x1x5::<2>, x1x6::<2>,
-                            x1x7::<2>, x1x8::<2>,
-                        ],
-                        [
-                            x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>, x2x5::<2>, x2x6::<2>,
-                            x2x7::<2>, x2x8::<2>,
-                        ],
-                        [
-                            x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>, x3x5::<2>, x3x6::<2>,
-                            x3x7::<2>, x3x8::<2>,
-                        ],
-                    ],
-                    parallelism,
-                );
-            }
-        }
+        __inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
 
         #[cfg(target_arch = "aarch64")]
-        mod neon {
-            use super::*;
-            const N: usize = 2 * $multiplier;
-            const MR: usize = 3 * N;
-            const NR: usize = 8;
-
-            #[target_feature(enable = "neon")]
-            #[inline(never)]
-            pub unsafe fn gemm_basic(
-                m: usize,
-                n: usize,
-                k: usize,
-                dst: *mut T,
-                dst_cs: isize,
-                dst_rs: isize,
-                read_dst: bool,
-                lhs: *const T,
-                lhs_cs: isize,
-                lhs_rs: isize,
-                rhs: *const T,
-                rhs_cs: isize,
-                rhs_rs: isize,
-                alpha: T,
-                beta: T,
-                parallelism: Parallelism,
-            ) {
-                use microkernel::neon::$ty::*;
-                gemm_basic_generic::<_, T, N, MR, NR, { MR / N }>(
-                    crate::simd::Scalar,
-                    m,
-                    n,
-                    k,
-                    dst,
-                    dst_cs,
-                    dst_rs,
-                    read_dst,
-                    lhs,
-                    lhs_cs,
-                    lhs_rs,
-                    rhs,
-                    rhs_cs,
-                    rhs_rs,
-                    alpha,
-                    beta,
-                    |a, b, c| <$ty>::mul_add(a, b, c),
-                    &[
-                        [
-                            x1x1::<0>, x1x2::<0>, x1x3::<0>, x1x4::<0>, x1x5::<0>, x1x6::<0>,
-                            x1x7::<0>, x1x8::<0>,
-                        ],
-                        [
-                            x2x1::<0>, x2x2::<0>, x2x3::<0>, x2x4::<0>, x2x5::<0>, x2x6::<0>,
-                            x2x7::<0>, x2x8::<0>,
-                        ],
-                        [
-                            x3x1::<0>, x3x2::<0>, x3x3::<0>, x3x4::<0>, x3x5::<0>, x3x6::<0>,
-                            x3x7::<0>, x3x8::<0>,
-                        ],
-                    ],
-                    &[
-                        [
-                            x1x1::<1>, x1x2::<1>, x1x3::<1>, x1x4::<1>, x1x5::<1>, x1x6::<1>,
-                            x1x7::<1>, x1x8::<1>,
-                        ],
-                        [
-                            x2x1::<1>, x2x2::<1>, x2x3::<1>, x2x4::<1>, x2x5::<1>, x2x6::<1>,
-                            x2x7::<1>, x2x8::<1>,
-                        ],
-                        [
-                            x3x1::<1>, x3x2::<1>, x3x3::<1>, x3x4::<1>, x3x5::<1>, x3x6::<1>,
-                            x3x7::<1>, x3x8::<1>,
-                        ],
-                    ],
-                    &[
-                        [
-                            x1x1::<2>, x1x2::<2>, x1x3::<2>, x1x4::<2>, x1x5::<2>, x1x6::<2>,
-                            x1x7::<2>, x1x8::<2>,
-                        ],
-                        [
-                            x2x1::<2>, x2x2::<2>, x2x3::<2>, x2x4::<2>, x2x5::<2>, x2x6::<2>,
-                            x2x7::<2>, x2x8::<2>,
-                        ],
-                        [
-                            x3x1::<2>, x3x2::<2>, x3x3::<2>, x3x4::<2>, x3x5::<2>, x3x6::<2>,
-                            x3x7::<2>, x3x8::<2>,
-                        ],
-                    ],
-                    parallelism,
-                );
-            }
-        }
+        __inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
     };
 }
 
@@ -962,13 +557,7 @@ mod f64 {
     gemm_def!(f64, 1);
 }
 
-/// dst := alpha×dst + beta×lhs×rhs
-///
-/// # Panics
-///
-/// Panics if `T` is not `f32` or `f64`
-#[inline]
-pub unsafe fn gemm<T: 'static>(
+pub unsafe fn gemm_dispatch<T: 'static>(
     m: usize,
     n: usize,
     k: usize,
@@ -1027,6 +616,80 @@ pub unsafe fn gemm<T: 'static>(
     } else {
         unreachable!();
     }
+}
+
+/// dst := alpha×dst + beta×lhs×rhs
+///
+/// # Panics
+///
+/// Panics if `T` is not `f32` or `f64`
+#[inline]
+pub unsafe fn gemm<T: 'static>(
+    m: usize,
+    n: usize,
+    k: usize,
+    mut dst: *mut T,
+    dst_cs: isize,
+    dst_rs: isize,
+    read_dst: bool,
+    lhs: *const T,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
+    rhs_rs: isize,
+    alpha: T,
+    beta: T,
+    parallelism: Parallelism,
+) {
+    // transpose if the destination is column-oriented, since the microkernel prefers column major
+    // matrices
+
+    let do_transpose = dst_cs.abs() < dst_rs.abs();
+
+    let (m, n, mut dst_cs, mut dst_rs, mut lhs, lhs_cs, mut lhs_rs, mut rhs, mut rhs_cs, rhs_rs) =
+        if do_transpose {
+            (
+                n, m, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+            )
+        } else {
+            (
+                m, n, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+            )
+        };
+
+    if dst_rs < 0 {
+        dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
+        dst_rs = -dst_rs;
+        lhs = lhs.wrapping_offset((m - 1) as isize * lhs_rs);
+        lhs_rs = -lhs_rs;
+    }
+
+    if dst_cs < 0 {
+        dst = dst.wrapping_offset((n - 1) as isize * dst_cs);
+        dst_cs = -dst_cs;
+        rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);
+        rhs_cs = -rhs_cs;
+    }
+
+    gemm_dispatch(
+        m,
+        n,
+        k,
+        dst,
+        dst_cs,
+        dst_rs,
+        read_dst,
+        lhs,
+        lhs_cs,
+        lhs_rs,
+        rhs,
+        rhs_cs,
+        rhs_rs,
+        alpha,
+        beta,
+        parallelism,
+    )
 }
 
 #[inline(never)]
