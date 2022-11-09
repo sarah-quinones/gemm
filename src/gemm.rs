@@ -89,9 +89,7 @@ unsafe fn gemm_basic_generic<
     mut alpha: T,
     beta: T,
     mul_add: impl Copy + Fn(T, T, T) -> T,
-    dispatcher_zero: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
-    dispatcher_one: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
-    dispatcher_generic: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    dispatcher: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
     parallelism: Parallelism,
 ) {
     if m == 0 || n == 0 {
@@ -137,11 +135,11 @@ unsafe fn gemm_basic_generic<
     // on aarch64-neon, we always pack beyond a certain size, since the microkernel can use the
     // contiguity of the RHS with `vfmaq_laneq_[f32|f64]`
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = m > 8 * MR;
+    let do_pack_rhs = m > 2 * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
-    let do_pack_rhs = m > 8 * MR && rhs_rs.abs() != 1;
+    let do_pack_rhs = m > 2 * MR && rhs_rs.abs() != 1;
 
     let mut mem = if do_pack_rhs {
         Some(GlobalMemBuffer::new(StackReq::new_aligned::<T>(
@@ -177,12 +175,12 @@ unsafe fn gemm_basic_generic<
         let mut depth_outer = 0;
         while depth_outer != k {
             let k_chunk = kc.min(k - depth_outer);
-            let dispatcher = if alpha.is_zero() {
-                dispatcher_zero
+            let alpha_status = if alpha.is_zero() {
+                0
             } else if alpha.is_one() {
-                dispatcher_one
+                1
             } else {
-                dispatcher_generic
+                2
             };
 
             if do_pack_rhs {
@@ -276,7 +274,7 @@ unsafe fn gemm_basic_generic<
                             continue;
                         }
 
-                        let do_pack_lhs = (m_chunk % N != 0) || lhs_rs != 1 || n > 32 * NR;
+                        let do_pack_lhs = (m_chunk % N != 0) || lhs_rs != 1 || n > 2 * NR;
                         let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                         if do_pack_lhs {
@@ -294,65 +292,134 @@ unsafe fn gemm_basic_generic<
                             );
                         }
 
-                        let mut j = 0;
-                        while j < n_col_mini_chunks {
+                        let j_then_i = do_pack_lhs;
+
+                        if j_then_i {
+                            let mut j = 0;
+                            while j < n_col_mini_chunks {
+                                let mut i = 0;
+                                while i < n_row_mini_chunks {
+                                    let col_inner = NR * j;
+                                    let n_chunk_inner = NR.min(n_chunk - col_inner);
+
+                                    let row_inner = MR * i;
+                                    let m_chunk_inner = MR.min(m_chunk - row_inner);
+
+                                    let inner_idx = &mut i;
+                                    if job_id < job_start || job_id >= job_end {
+                                        job_id += 1;
+                                        *inner_idx += 1;
+                                        continue;
+                                    }
+                                    job_id += 1;
+
+                                    let dst = dst.wrapping_offset(
+                                        (row_outer + row_inner) as isize * dst_rs
+                                            + (col_outer + col_inner) as isize * dst_cs,
+                                    );
+
+                                    let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
+                                        [n_chunk_inner - 1];
+
+                                    func(
+                                        m_chunk_inner,
+                                        n_chunk_inner,
+                                        k_chunk,
+                                        dst.0,
+                                        if do_pack_lhs {
+                                            packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                        } else {
+                                            lhs.wrapping_offset(
+                                                (row_outer + row_inner) as isize * lhs_rs
+                                                    + depth_outer as isize * lhs_cs,
+                                            )
+                                            .0
+                                        },
+                                        if do_pack_rhs {
+                                            packed_rhs.wrapping_add(j * packed_rhs_stride).0
+                                        } else {
+                                            rhs.wrapping_offset(
+                                                depth_outer as isize * rhs_rs
+                                                    + (col_outer + col_inner) as isize * rhs_cs,
+                                            )
+                                            .0
+                                        },
+                                        dst_cs,
+                                        dst_rs,
+                                        packed_lhs_cs,
+                                        packed_rhs_rs,
+                                        packed_rhs_cs,
+                                        alpha,
+                                        beta,
+                                        alpha_status,
+                                    );
+                                    i += 1;
+                                }
+                                j += 1;
+                            }
+                        } else {
                             let mut i = 0;
                             while i < n_row_mini_chunks {
-                                let col_inner = NR * j;
-                                let n_chunk_inner = NR.min(n_chunk - col_inner);
+                                let mut j = 0;
+                                while j < n_col_mini_chunks {
+                                    let col_inner = NR * j;
+                                    let n_chunk_inner = NR.min(n_chunk - col_inner);
 
-                                let row_inner = MR * i;
-                                let m_chunk_inner = MR.min(m_chunk - row_inner);
+                                    let row_inner = MR * i;
+                                    let m_chunk_inner = MR.min(m_chunk - row_inner);
 
-                                if job_id < job_start || job_id >= job_end {
+                                    let inner_idx = &mut j;
+                                    if job_id < job_start || job_id >= job_end {
+                                        job_id += 1;
+                                        *inner_idx += 1;
+                                        continue;
+                                    }
                                     job_id += 1;
-                                    i += 1;
-                                    continue;
+
+                                    let dst = dst.wrapping_offset(
+                                        (row_outer + row_inner) as isize * dst_rs
+                                            + (col_outer + col_inner) as isize * dst_cs,
+                                    );
+
+                                    let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
+                                        [n_chunk_inner - 1];
+
+                                    func(
+                                        m_chunk_inner,
+                                        n_chunk_inner,
+                                        k_chunk,
+                                        dst.0,
+                                        if do_pack_lhs {
+                                            packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                        } else {
+                                            lhs.wrapping_offset(
+                                                (row_outer + row_inner) as isize * lhs_rs
+                                                    + depth_outer as isize * lhs_cs,
+                                            )
+                                            .0
+                                        },
+                                        if do_pack_rhs {
+                                            packed_rhs.wrapping_add(j * packed_rhs_stride).0
+                                        } else {
+                                            rhs.wrapping_offset(
+                                                depth_outer as isize * rhs_rs
+                                                    + (col_outer + col_inner) as isize * rhs_cs,
+                                            )
+                                            .0
+                                        },
+                                        dst_cs,
+                                        dst_rs,
+                                        packed_lhs_cs,
+                                        packed_rhs_rs,
+                                        packed_rhs_cs,
+                                        alpha,
+                                        beta,
+                                        alpha_status,
+                                    );
+                                    j += 1;
                                 }
-                                job_id += 1;
-
-                                let dst = dst.wrapping_offset(
-                                    (row_outer + row_inner) as isize * dst_rs
-                                        + (col_outer + col_inner) as isize * dst_cs,
-                                );
-
-                                let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
-                                    [n_chunk_inner - 1];
-
-                                func(
-                                    m_chunk_inner,
-                                    n_chunk_inner,
-                                    k_chunk,
-                                    dst.0,
-                                    if do_pack_lhs {
-                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
-                                    } else {
-                                        lhs.wrapping_offset(
-                                            (row_outer + row_inner) as isize * lhs_rs
-                                                + depth_outer as isize * lhs_cs,
-                                        )
-                                        .0
-                                    },
-                                    if do_pack_rhs {
-                                        packed_rhs.wrapping_add(j * packed_rhs_stride).0
-                                    } else {
-                                        rhs.wrapping_offset(
-                                            depth_outer as isize * rhs_rs
-                                                + (col_outer + col_inner) as isize * rhs_cs,
-                                        )
-                                        .0
-                                    },
-                                    dst_cs,
-                                    dst_rs,
-                                    packed_lhs_cs,
-                                    packed_rhs_rs,
-                                    packed_rhs_cs,
-                                    alpha,
-                                    beta,
-                                );
                                 i += 1;
                             }
-                            j += 1;
                         }
 
                         row_outer += m_chunk;
@@ -424,9 +491,7 @@ macro_rules! __inject_mod {
                     alpha,
                     beta,
                     |a, b, c| a * b + c,
-                    &UKR[0],
-                    &UKR[1],
-                    &UKR[2],
+                    &UKR,
                     parallelism,
                 );
             }
@@ -642,9 +707,8 @@ pub unsafe fn gemm<T: 'static>(
     beta: T,
     parallelism: Parallelism,
 ) {
-    // transpose if the destination is column-oriented, since the microkernel prefers column major
-    // matrices
-
+    // we want to transpose if the destination is column-oriented, since the microkernel prefers
+    // column major matrices.
     let do_transpose = dst_cs.abs() < dst_rs.abs();
 
     let (m, n, mut dst_cs, mut dst_rs, mut lhs, lhs_cs, mut lhs_rs, mut rhs, mut rhs_cs, rhs_rs) =

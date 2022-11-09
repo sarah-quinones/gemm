@@ -5,22 +5,23 @@ use std::time::Duration;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut mnks = vec![];
-    mnks.push((896, 128, 128));
-    mnks.push((256, 32, 256));
-    mnks.push((48, 48, 256));
-    mnks.push((52, 52, 256));
-    mnks.push((256, 256, 256));
-    mnks.push((256, 512, 256));
-    mnks.push((512, 256, 256));
-    mnks.push((1024, 1024, 1024));
-    mnks.push((63, 1, 10));
-    mnks.push((63, 2, 10));
-    mnks.push((63, 3, 10));
-    mnks.push((63, 4, 10));
-    mnks.push((1, 63, 10));
-    mnks.push((2, 63, 10));
-    mnks.push((3, 63, 10));
-    mnks.push((4, 63, 10));
+    let mut push = |(m, n, k)| {
+        mnks.push((m, n, k));
+        if m != n {
+            mnks.push((n, m, k));
+        };
+    };
+    push((1024, 1024, 1024));
+    push((896, 128, 128));
+    push((512, 256, 256));
+    push((256, 256, 256));
+    push((256, 32, 256));
+    push((52, 52, 256));
+    push((48, 48, 256));
+    push((63, 1, 10));
+    push((63, 2, 10));
+    push((63, 3, 10));
+    push((63, 4, 10));
 
     for (m, n, k) in mnks.iter().copied() {
         let a_vec = vec![0.0_f64; m * k];

@@ -12,6 +12,7 @@ pub(crate) type MicroKernelFn<T> = unsafe fn(
     isize,
     T,
     T,
+    u8,
 );
 
 // microkernel_fn_array!{
@@ -87,11 +88,8 @@ macro_rules! microkernel_fn_array {
        pub const NR: usize =
            __microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
 
-        pub const UKR: [[[super::super::MicroKernelFn<T>; NR]; MR_DIV_N]; 3] = [
-            [ $([$($ukr::<0>,)*]),* ],
-            [ $([$($ukr::<1>,)*]),* ],
-            [ $([$($ukr::<2>,)*]),* ],
-        ];
+        pub const UKR: [[super::super::MicroKernelFn<T>; NR]; MR_DIV_N] =
+            [ $([$($ukr,)*]),* ];
     };
 }
 
@@ -100,7 +98,7 @@ macro_rules! microkernel {
         #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
-        pub unsafe fn $name<const ALPHA: u8>(
+        pub unsafe fn $name(
             m: usize,
             n: usize,
             k: usize,
@@ -114,9 +112,8 @@ macro_rules! microkernel {
             rhs_cs: isize,
             alpha: T,
             beta: T,
+            alpha_status: u8,
         ) {
-            assert!(ALPHA <= 2);
-
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
 
@@ -311,7 +308,7 @@ macro_rules! microkernel {
                 let beta = splat(beta);
                 if dst_rs == 1 {
 
-                    if ALPHA == 2 {
+                    if alpha_status == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
@@ -321,7 +318,7 @@ macro_rules! microkernel {
                                 ));
                             }});
                         });
-                    } else if ALPHA == 1 {
+                    } else if alpha_status == 1 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
@@ -341,7 +338,7 @@ macro_rules! microkernel {
                         });
                     }
                 } else {
-                    if ALPHA == 2 {
+                    if alpha_status == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
@@ -355,7 +352,7 @@ macro_rules! microkernel {
                                 );
                             }});
                         });
-                    } else if ALPHA == 1 {
+                    } else if alpha_status == 1 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
@@ -387,7 +384,7 @@ macro_rules! microkernel {
                 let src = accum_storage; // write to stack
                 let src = src.as_ptr() as *const T;
 
-                if ALPHA == 2 {
+                if alpha_status == 2 {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
                         let src_j = src.add(j * $mr_div_n * N);
@@ -399,7 +396,7 @@ macro_rules! microkernel {
                             *dst_ij = alpha * *dst_ij + beta * *src_ij;
                         }
                     }
-                } else if ALPHA == 1 {
+                } else if alpha_status == 1 {
                     for j in 0..n {
                         let dst_j = dst.offset(dst_cs * j as isize);
                         let src_j = src.add(j * $mr_div_n * N);
