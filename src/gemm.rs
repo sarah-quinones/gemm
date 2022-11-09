@@ -274,7 +274,7 @@ unsafe fn gemm_basic_generic<
                             continue;
                         }
 
-                        let do_pack_lhs = (m_chunk % N != 0) || lhs_rs != 1 || n > 2 * NR;
+                        let do_pack_lhs = (m_chunk % N != 0) || lhs_rs != 1;
                         let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                         if do_pack_lhs {
@@ -292,7 +292,7 @@ unsafe fn gemm_basic_generic<
                             );
                         }
 
-                        let j_then_i = do_pack_lhs;
+                        let j_then_i = !do_pack_lhs;
 
                         if j_then_i {
                             let mut j = 0;
