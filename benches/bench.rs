@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use gemm::{c32, c64, gemm};
+use gemm::{c64, gemm};
 use nalgebra::DMatrix;
 use std::time::Duration;
 
