@@ -985,12 +985,12 @@ pub mod scalar {
             conj_rhs: bool,
         ) -> Pack {
             if conj_rhs {
-                add(c_re_im, mul_cplx(a_re_im, a_im_re, b_re, b_im))
-            } else {
                 add(
                     c_re_im,
-                    mul_cplx(a_re_im, a_im_re, b_re, [-b_im[0], -b_im[0]]),
+                    mul_cplx(a_re_im, a_im_re, b_re, [-b_im[0], -b_im[1]]),
                 )
+            } else {
+                add(c_re_im, mul_cplx(a_re_im, a_im_re, b_re, b_im))
             }
         }
 
