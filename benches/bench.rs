@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use gemm::gemm;
+use gemm::{c32, c64, gemm};
 use nalgebra::DMatrix;
 use std::time::Duration;
 
@@ -115,6 +115,47 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         c.bench_function(&format!("f32-nalg-{}×{}×{}", m, n, k), |b| {
             b.iter(|| c_mat = &a_mat * &b_mat)
         });
+    }
+
+    for (m, n, k) in mnks.iter().copied() {
+        let a_vec = vec![c64::default(); m * k];
+        let b_vec = vec![c64::default(); k * n];
+        let mut c_vec = vec![c64::default(); m * n];
+
+        for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
+            for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
+                for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
+                    c.bench_function(
+                        &format!(
+                            "c64-{}{}{}-gemm-{}×{}×{}",
+                            dst_label, lhs_label, rhs_label, m, n, k
+                        ),
+                        |b| {
+                            b.iter(|| unsafe {
+                                gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    dst_cs as isize,
+                                    dst_rs as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    lhs_cs as isize,
+                                    lhs_rs as isize,
+                                    b_vec.as_ptr(),
+                                    rhs_cs as isize,
+                                    rhs_rs as isize,
+                                    c64::default(),
+                                    c64::default(),
+                                    gemm::Parallelism::None,
+                                )
+                            })
+                        },
+                    );
+                }
+            }
+        }
     }
 }
 

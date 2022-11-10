@@ -499,6 +499,60 @@ macro_rules! __inject_mod {
     };
 }
 
+macro_rules! __inject_mod_cplx {
+    ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
+        paste::paste! {
+            mod [<$module _cplx>] {
+                use super::*;
+                use microkernel::$module::$ty::*;
+                const N: usize = $N;
+
+                #[inline(never)]
+                pub unsafe fn gemm_basic_cplx(
+                    m: usize,
+                    n: usize,
+                    k: usize,
+                    dst: *mut num_complex::Complex<T>,
+                    dst_cs: isize,
+                    dst_rs: isize,
+                    read_dst: bool,
+                    lhs: *const num_complex::Complex<T>,
+                    lhs_cs: isize,
+                    lhs_rs: isize,
+                    rhs: *const num_complex::Complex<T>,
+                    rhs_cs: isize,
+                    rhs_rs: isize,
+                    alpha: num_complex::Complex<T>,
+                    beta: num_complex::Complex<T>,
+                    parallelism: Parallelism,
+                    ) {
+                    gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
+                        crate::simd::$simd,
+                        m,
+                        n,
+                        k,
+                        dst,
+                        dst_cs,
+                        dst_rs,
+                        read_dst,
+                        lhs,
+                        lhs_cs,
+                        lhs_rs,
+                        rhs,
+                        rhs_cs,
+                        rhs_rs,
+                        alpha,
+                        beta,
+                        |a, b, c| a * b + c,
+                        &CPLX_UKR,
+                        parallelism,
+                        );
+                }
+            }
+        }
+    };
+}
+
 macro_rules! gemm_def {
     ($ty: tt, $multiplier: expr) => {
         use super::*;
@@ -520,6 +574,24 @@ macro_rules! gemm_def {
             isize,
             T,
             T,
+            Parallelism,
+        );
+        type GemmCplxTy = unsafe fn(
+            usize,
+            usize,
+            usize,
+            *mut num_complex::Complex<T>,
+            isize,
+            isize,
+            bool,
+            *const num_complex::Complex<T>,
+            isize,
+            isize,
+            *const num_complex::Complex<T>,
+            isize,
+            isize,
+            num_complex::Complex<T>,
+            num_complex::Complex<T>,
             Parallelism,
         );
 
@@ -556,47 +628,24 @@ macro_rules! gemm_def {
             }
         }
 
-        lazy_static::lazy_static! {
-            static ref GEMM: GemmTy = init_gemm_fn();
+        fn init_gemm_cplx_fn() -> GemmCplxTy {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                #[cfg(feature = "nightly")]
+                if feature_detected!("avx512f") {
+                    return avx512f_cplx::gemm_basic_cplx;
+                }
+            }
+
+            unreachable!()
         }
 
-        #[inline]
-        pub unsafe fn gemm_basic(
-            m: usize,
-            n: usize,
-            k: usize,
-            dst: *mut T,
-            dst_cs: isize,
-            dst_rs: isize,
-            read_dst: bool,
-            lhs: *const T,
-            lhs_cs: isize,
-            lhs_rs: isize,
-            rhs: *const T,
-            rhs_cs: isize,
-            rhs_rs: isize,
-            alpha: T,
-            beta: T,
-            parallelism: Parallelism,
-        ) {
-            GEMM(
-                m,
-                n,
-                k,
-                dst,
-                dst_cs,
-                dst_rs,
-                read_dst,
-                lhs,
-                lhs_cs,
-                lhs_rs,
-                rhs,
-                rhs_cs,
-                rhs_rs,
-                alpha,
-                beta,
-                parallelism,
-            )
+        lazy_static::lazy_static! {
+            pub static ref GEMM: GemmTy = init_gemm_fn();
+        }
+
+        lazy_static::lazy_static! {
+            pub static ref GEMM_CPLX: GemmCplxTy = init_gemm_cplx_fn();
         }
 
         __inject_mod!(scalar, $ty, 1, Scalar);
@@ -610,6 +659,9 @@ macro_rules! gemm_def {
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
         __inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
 
+        #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
+        __inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, Avx512f);
+
         #[cfg(target_arch = "aarch64")]
         __inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
     };
@@ -621,6 +673,11 @@ mod f32 {
 mod f64 {
     gemm_def!(f64, 1);
 }
+
+#[allow(non_camel_case_types)]
+pub type c32 = num_complex::Complex32;
+#[allow(non_camel_case_types)]
+pub type c64 = num_complex::Complex64;
 
 pub unsafe fn gemm_dispatch<T: 'static>(
     m: usize,
@@ -641,7 +698,7 @@ pub unsafe fn gemm_dispatch<T: 'static>(
     parallelism: Parallelism,
 ) {
     if TypeId::of::<T>() == TypeId::of::<f64>() {
-        crate::gemm::f64::gemm_basic(
+        crate::gemm::f64::GEMM(
             m,
             n,
             k,
@@ -660,7 +717,7 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f32>() {
-        crate::gemm::f32::gemm_basic(
+        crate::gemm::f32::GEMM(
             m,
             n,
             k,
@@ -676,6 +733,44 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f32),
             *(&beta as *const T as *const f32),
+            parallelism,
+        )
+    } else if TypeId::of::<T>() == TypeId::of::<c64>() {
+        crate::gemm::f64::GEMM_CPLX(
+            m,
+            n,
+            k,
+            dst as *mut c64,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs as *mut c64,
+            lhs_cs,
+            lhs_rs,
+            rhs as *mut c64,
+            rhs_cs,
+            rhs_rs,
+            *(&alpha as *const T as *const c64),
+            *(&beta as *const T as *const c64),
+            parallelism,
+        )
+    } else if TypeId::of::<T>() == TypeId::of::<c32>() {
+        crate::gemm::f32::GEMM_CPLX(
+            m,
+            n,
+            k,
+            dst as *mut c32,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs as *mut c32,
+            lhs_cs,
+            lhs_rs,
+            rhs as *mut c32,
+            rhs_cs,
+            rhs_rs,
+            *(&alpha as *const T as *const c32),
+            *(&beta as *const T as *const c32),
             parallelism,
         )
     } else {

@@ -93,6 +93,20 @@ macro_rules! microkernel_fn_array {
     };
 }
 
+macro_rules! microkernel_cplx_fn_array {
+    ($([
+       $($ukr: ident,)*
+    ],)*) => {
+       pub const CPLX_MR_DIV_N: usize =
+           __microkernel_fn_array_helper!([$([$($ukr,)*],)*]);
+       pub const CPLX_NR: usize =
+           __microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
+
+        pub const CPLX_UKR: [[super::super::MicroKernelFn<num_complex::Complex<T>>; CPLX_NR]; CPLX_MR_DIV_N] =
+            [ $([$($ukr,)*]),* ];
+    };
+}
+
 macro_rules! microkernel {
     ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
         #[inline]
@@ -426,7 +440,7 @@ macro_rules! microkernel {
     };
 }
 
-macro_rules! cplx_microkernel {
+macro_rules! microkernel_cplx {
     ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
@@ -435,7 +449,7 @@ macro_rules! cplx_microkernel {
             m: usize,
             n: usize,
             k: usize,
-            dst: *mut T,
+            dst: *mut num_complex::Complex<T>,
             mut packed_lhs: *const num_complex::Complex<T>,
             mut packed_rhs: *const num_complex::Complex<T>,
             dst_cs: isize,
@@ -450,19 +464,23 @@ macro_rules! cplx_microkernel {
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
 
-            let mut lhs = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
-            let mut rhs = ::core::mem::MaybeUninit::<Pack>::uninit();
+            let mut lhs_re_im = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
+            let mut lhs_im_re = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
+            let mut rhs_re = ::core::mem::MaybeUninit::<Pack>::uninit();
+            let mut rhs_im = ::core::mem::MaybeUninit::<Pack>::uninit();
 
             #[derive(Copy, Clone)]
             struct KernelIter {
-                packed_lhs: *const T,
-                packed_rhs: *const T,
+                packed_lhs: *const num_complex::Complex<T>,
+                packed_rhs: *const num_complex::Complex<T>,
                 lhs_cs: isize,
                 rhs_rs: isize,
                 rhs_cs: isize,
                 accum: *mut Pack,
-                lhs: *mut Pack,
-                rhs: *mut Pack,
+                lhs_re_im: *mut Pack,
+                lhs_im_re: *mut Pack,
+                rhs_re: *mut Pack,
+                rhs_im: *mut Pack,
             }
 
             impl KernelIter {
@@ -471,18 +489,27 @@ macro_rules! cplx_microkernel {
                     let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
                     let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
-                    seq_macro::seq!(M_ITER in 0..$mr_div_n {
-                        *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
-                    });
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        let tmp = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                        *self.lhs_re_im.add(M_ITER) = tmp;
+                        *self.lhs_im_re.add(M_ITER) = swap_re_im(tmp);
+                    }});
 
                     seq_macro::seq!(N_ITER in 0..$nr {
-                        *self.rhs = splat(*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs));
+                        *self.rhs_re = splat((*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs)).re);
+                        *self.rhs_im = splat((*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs)).im);
+
                         let accum = self.accum.add(N_ITER * $mr_div_n);
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let accum = &mut *accum.add(M_ITER);
                             *accum = mul_add(
-                                *self.lhs.add(M_ITER),
-                                *self.rhs,
+                                *self.lhs_re_im.add(M_ITER),
+                                *self.rhs_re,
+                                *accum,
+                            );
+                            *accum = mul_add(
+                                *self.lhs_im_re.add(M_ITER),
+                                *self.rhs_im,
                                 *accum,
                             );
                         }});
@@ -504,8 +531,10 @@ macro_rules! cplx_microkernel {
                             rhs_rs,
                             rhs_cs,
                             accum,
-                            lhs: lhs.as_mut_ptr() as _,
-                            rhs: &mut rhs as *mut _ as _,
+                            lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                            lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                            rhs_re: &mut rhs_re as *mut _ as _,
+                            rhs_im: &mut rhs_im as *mut _ as _,
                         };
 
                         seq_macro::seq!(UNROLL_ITER in 0..4 {
@@ -531,8 +560,10 @@ macro_rules! cplx_microkernel {
                             rhs_rs,
                             rhs_cs,
                             accum,
-                            lhs: lhs.as_mut_ptr() as _,
-                            rhs: &mut rhs as *mut _ as _,
+                            lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                            lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                            rhs_re: &mut rhs_re as *mut _ as _,
+                            rhs_im: &mut rhs_im as *mut _ as _,
                         }
                         .execute(0);
 
@@ -549,81 +580,45 @@ macro_rules! cplx_microkernel {
             }
 
             if m == $mr_div_n * N && n == $nr {
-                let alpha = splat(alpha);
-                let beta = splat(beta);
+                let alpha_re = splat(alpha.re);
+                let alpha_im = splat(alpha.im);
+                let beta_re = splat(beta.re);
+                let beta_im = splat(beta.im);
                 if dst_rs == 1 {
 
                     if alpha_status == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(add(
-                                    mul(alpha, dst.read_unaligned()),
-                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                ));
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = add(
+                                    mul_cplx(*dst, swap_re_im(*dst), alpha_re, alpha_im),
+                                    mul_cplx(accum, swap_re_im(accum), beta_re, beta_im),
+                                );
                             }});
                         });
                     } else if alpha_status == 1 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(mul_add(
-                                    beta,
-                                    *accum.offset(M_ITER + $mr_div_n * N_ITER),
-                                    dst.read_unaligned(),
-                                ));
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = add(
+                                    *dst,
+                                    mul_cplx(accum, swap_re_im(accum), beta_re, beta_im),
+                                );
                             }});
                         });
                     } else {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                                 let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)));
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = mul_cplx(accum, swap_re_im(accum), beta_re, beta_im);
                             }});
                         });
                     }
                 } else {
-                    if alpha_status == 2 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
-                                    add(
-                                        mul(alpha, gather(dst, dst_rs)),
-                                        mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                    ),
-                                );
-                            }});
-                        });
-                    } else if alpha_status == 1 {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
-                                    mul_add(
-                                        beta,
-                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
-                                        gather(dst, dst_rs),
-                                    ),
-                                );
-                            }});
-                        });
-                    } else {
-                        seq_macro::seq!(N_ITER in 0..$nr {
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
-                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                );
-                            }});
-                        });
-                    }
+                    todo!()
                 }
             } else {
                 let src = accum_storage; // write to stack
@@ -1264,6 +1259,20 @@ pub mod avx512f {
             transmute(_mm512_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            transmute(_mm512_permute_ps::<0b10110001>(transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            transmute(_mm512_fmaddsub_ps(
+                transmute(a_re_im),
+                transmute(b_re),
+                _mm512_mul_ps(transmute(a_im_re), transmute(b_im)),
+            ))
+        }
+
         microkernel!(["avx512f"], x1x1, 1, 1);
         microkernel!(["avx512f"], x1x2, 1, 2);
         microkernel!(["avx512f"], x1x3, 1, 3);
@@ -1295,6 +1304,27 @@ pub mod avx512f {
             [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
             [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
             [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
+
+        microkernel_cplx!(["avx512f"], cplx_x1x1, 1, 1);
+        microkernel_cplx!(["avx512f"], cplx_x1x2, 1, 2);
+        microkernel_cplx!(["avx512f"], cplx_x1x3, 1, 3);
+        microkernel_cplx!(["avx512f"], cplx_x1x4, 1, 4);
+
+        microkernel_cplx!(["avx512f"], cplx_x2x1, 2, 1);
+        microkernel_cplx!(["avx512f"], cplx_x2x2, 2, 2);
+        microkernel_cplx!(["avx512f"], cplx_x2x3, 2, 3);
+        microkernel_cplx!(["avx512f"], cplx_x2x4, 2, 4);
+
+        microkernel_cplx!(["avx512f"], cplx_x3x1, 3, 1);
+        microkernel_cplx!(["avx512f"], cplx_x3x2, 3, 2);
+        microkernel_cplx!(["avx512f"], cplx_x3x3, 3, 3);
+        microkernel_cplx!(["avx512f"], cplx_x3x4, 3, 4);
+
+        microkernel_cplx_fn_array! {
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4,],
         }
     }
 
@@ -1364,6 +1394,20 @@ pub mod avx512f {
             transmute(_mm512_fmadd_pd(transmute(a), transmute(b), transmute(c)))
         }
 
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            transmute(_mm512_permute_pd::<0b01010101>(transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            transmute(_mm512_fmaddsub_pd(
+                transmute(a_re_im),
+                transmute(b_re),
+                _mm512_mul_pd(transmute(a_im_re), transmute(b_im)),
+            ))
+        }
+
         microkernel!(["avx512f"], x1x1, 1, 1);
         microkernel!(["avx512f"], x1x2, 1, 2);
         microkernel!(["avx512f"], x1x3, 1, 3);
@@ -1395,6 +1439,27 @@ pub mod avx512f {
             [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
             [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
             [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
+
+        microkernel_cplx!(["avx512f"], cplx_x1x1, 1, 1);
+        microkernel_cplx!(["avx512f"], cplx_x1x2, 1, 2);
+        microkernel_cplx!(["avx512f"], cplx_x1x3, 1, 3);
+        microkernel_cplx!(["avx512f"], cplx_x1x4, 1, 4);
+
+        microkernel_cplx!(["avx512f"], cplx_x2x1, 2, 1);
+        microkernel_cplx!(["avx512f"], cplx_x2x2, 2, 2);
+        microkernel_cplx!(["avx512f"], cplx_x2x3, 2, 3);
+        microkernel_cplx!(["avx512f"], cplx_x2x4, 2, 4);
+
+        microkernel_cplx!(["avx512f"], cplx_x3x1, 3, 1);
+        microkernel_cplx!(["avx512f"], cplx_x3x2, 3, 2);
+        microkernel_cplx!(["avx512f"], cplx_x3x3, 3, 3);
+        microkernel_cplx!(["avx512f"], cplx_x3x4, 3, 4);
+
+        microkernel_cplx_fn_array! {
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4,],
         }
     }
 }
