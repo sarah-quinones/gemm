@@ -88,6 +88,9 @@ unsafe fn gemm_basic_generic<
     rhs_rs: isize,
     mut alpha: T,
     beta: T,
+    conj_dst: bool,
+    conj_lhs: bool,
+    conj_rhs: bool,
     mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
     parallelism: Parallelism,
@@ -99,27 +102,27 @@ unsafe fn gemm_basic_generic<
         alpha.set_zero();
     }
 
-    if k <= 2 {
-        gevv::gevv(
-            simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
-            beta, mul_add,
-        );
-        return;
-    }
-    if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
-        gemv::gemv(
-            simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha,
-            beta, mul_add,
-        );
-        return;
-    }
-    if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
-        gemv::gemv(
-            simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
-            beta, mul_add,
-        );
-        return;
-    }
+    // if k <= 2 {
+    //     gevv::gevv(
+    //         simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
+    //         beta, mul_add,
+    //     );
+    //     return;
+    // }
+    // if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
+    //     gemv::gemv(
+    //         simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha,
+    //         beta, mul_add,
+    //     );
+    //     return;
+    // }
+    // if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
+    //     gemv::gemv(
+    //         simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
+    //         beta, mul_add,
+    //     );
+    //     return;
+    // }
 
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
@@ -171,6 +174,7 @@ unsafe fn gemm_basic_generic<
         let n_chunk = nc.min(n - col_outer);
 
         let mut alpha = alpha;
+        let mut conj_dst = conj_dst;
 
         let mut depth_outer = 0;
         while depth_outer != k {
@@ -352,6 +356,9 @@ unsafe fn gemm_basic_generic<
                                         alpha,
                                         beta,
                                         alpha_status,
+                                        conj_dst,
+                                        conj_lhs,
+                                        conj_rhs,
                                     );
                                     i += 1;
                                 }
@@ -415,6 +422,9 @@ unsafe fn gemm_basic_generic<
                                         alpha,
                                         beta,
                                         alpha_status,
+                                        conj_dst,
+                                        conj_lhs,
+                                        conj_rhs,
                                     );
                                     j += 1;
                                 }
@@ -440,7 +450,9 @@ unsafe fn gemm_basic_generic<
                 }
             }
 
+            conj_dst = false;
             alpha.set_one();
+
             depth_outer += k_chunk;
         }
         col_outer += n_chunk;
@@ -471,6 +483,9 @@ macro_rules! __inject_mod {
                 rhs_rs: isize,
                 alpha: T,
                 beta: T,
+                conj_dst: bool,
+                conj_lhs: bool,
+                conj_rhs: bool,
                 parallelism: Parallelism,
             ) {
                 gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
@@ -490,6 +505,9 @@ macro_rules! __inject_mod {
                     rhs_rs,
                     alpha,
                     beta,
+                    conj_dst,
+                    conj_lhs,
+                    conj_rhs,
                     |a, b, c| a * b + c,
                     &UKR,
                     parallelism,
@@ -524,6 +542,9 @@ macro_rules! __inject_mod_cplx {
                     rhs_rs: isize,
                     alpha: num_complex::Complex<T>,
                     beta: num_complex::Complex<T>,
+                    conj_dst: bool,
+                    conj_lhs: bool,
+                    conj_rhs: bool,
                     parallelism: Parallelism,
                     ) {
                     gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
@@ -543,6 +564,9 @@ macro_rules! __inject_mod_cplx {
                         rhs_rs,
                         alpha,
                         beta,
+                        conj_dst,
+                        conj_lhs,
+                        conj_rhs,
                         |a, b, c| a * b + c,
                         &CPLX_UKR,
                         parallelism,
@@ -574,6 +598,9 @@ macro_rules! gemm_def {
             isize,
             T,
             T,
+            bool,
+            bool,
+            bool,
             Parallelism,
         );
         type GemmCplxTy = unsafe fn(
@@ -592,6 +619,9 @@ macro_rules! gemm_def {
             isize,
             num_complex::Complex<T>,
             num_complex::Complex<T>,
+            bool,
+            bool,
+            bool,
             Parallelism,
         );
 
@@ -635,6 +665,9 @@ macro_rules! gemm_def {
                 if feature_detected!("avx512f") {
                     return avx512f_cplx::gemm_basic_cplx;
                 }
+                if feature_detected!("fma") {
+                    return fma_cplx::gemm_basic_cplx;
+                }
             }
 
             unreachable!()
@@ -656,9 +689,10 @@ macro_rules! gemm_def {
         __inject_mod!(avx, $ty, 4 * $multiplier, Avx);
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         __inject_mod!(fma, $ty, 4 * $multiplier, Fma);
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        __inject_mod_cplx!(fma, $ty, 2 * $multiplier, Fma);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
         __inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
-
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
         __inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, Avx512f);
 
@@ -695,6 +729,9 @@ pub unsafe fn gemm_dispatch<T: 'static>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
+    conj_dst: bool,
+    conj_lhs: bool,
+    conj_rhs: bool,
     parallelism: Parallelism,
 ) {
     if TypeId::of::<T>() == TypeId::of::<f64>() {
@@ -714,6 +751,9 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f64),
             *(&beta as *const T as *const f64),
+            false,
+            false,
+            false,
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f32>() {
@@ -733,6 +773,9 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f32),
             *(&beta as *const T as *const f32),
+            false,
+            false,
+            false,
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<c64>() {
@@ -752,6 +795,9 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const c64),
             *(&beta as *const T as *const c64),
+            conj_dst,
+            conj_lhs,
+            conj_rhs,
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<c32>() {
@@ -771,6 +817,9 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const c32),
             *(&beta as *const T as *const c32),
+            conj_dst,
+            conj_lhs,
+            conj_rhs,
             parallelism,
         )
     } else {
@@ -800,22 +849,37 @@ pub unsafe fn gemm<T: 'static>(
     rhs_rs: isize,
     alpha: T,
     beta: T,
+    conj_dst: bool,
+    conj_lhs: bool,
+    conj_rhs: bool,
     parallelism: Parallelism,
 ) {
     // we want to transpose if the destination is column-oriented, since the microkernel prefers
     // column major matrices.
     let do_transpose = dst_cs.abs() < dst_rs.abs();
 
-    let (m, n, mut dst_cs, mut dst_rs, mut lhs, lhs_cs, mut lhs_rs, mut rhs, mut rhs_cs, rhs_rs) =
-        if do_transpose {
-            (
-                n, m, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
-            )
-        } else {
-            (
-                m, n, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-            )
-        };
+    let (
+        m,
+        n,
+        mut dst_cs,
+        mut dst_rs,
+        mut lhs,
+        lhs_cs,
+        mut lhs_rs,
+        mut rhs,
+        mut rhs_cs,
+        rhs_rs,
+        conj_lhs,
+        conj_rhs,
+    ) = if do_transpose {
+        (
+            n, m, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, conj_rhs, conj_lhs,
+        )
+    } else {
+        (
+            m, n, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, conj_lhs, conj_rhs,
+        )
+    };
 
     if dst_rs < 0 {
         dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
@@ -847,6 +911,9 @@ pub unsafe fn gemm<T: 'static>(
         rhs_rs,
         alpha,
         beta,
+        conj_dst,
+        conj_lhs,
+        conj_rhs,
         parallelism,
     )
 }
@@ -899,6 +966,62 @@ pub(crate) unsafe fn gemm_fallback<T>(
                 .0;
             if read_dst {
                 accum = &accum + &(&alpha * &*dst);
+            }
+            *dst = accum
+        });
+    });
+    return;
+}
+
+#[inline(never)]
+#[cfg(test)]
+pub(crate) unsafe fn gemm_cplx_fallback<T>(
+    m: usize,
+    n: usize,
+    k: usize,
+    dst: *mut num_complex::Complex<T>,
+    dst_cs: isize,
+    dst_rs: isize,
+    read_dst: bool,
+    lhs: *const num_complex::Complex<T>,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const num_complex::Complex<T>,
+    rhs_cs: isize,
+    rhs_rs: isize,
+    alpha: num_complex::Complex<T>,
+    beta: num_complex::Complex<T>,
+    conj_dst: bool,
+    conj_lhs: bool,
+    conj_rhs: bool,
+) where
+    T: Zero + Send + Sync + std::clone::Clone + num_traits::Num + core::ops::Neg<Output = T>,
+    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
+    for<'a> &'a T: core::ops::Sub<&'a T, Output = T>,
+    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
+{
+    (0..m).for_each(|row| {
+        (0..n).for_each(|col| {
+            let mut accum = num_complex::Complex::<T>::zero();
+            for depth in 0..k {
+                let lhs = &*lhs.wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs);
+                let rhs = &*rhs.wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs);
+
+                match (conj_lhs, conj_rhs) {
+                    (true, true) => accum = &accum + &(lhs.conj() * rhs.conj()),
+                    (true, false) => accum = &accum + &(lhs.conj() * rhs),
+                    (false, true) => accum = &accum + &(lhs * rhs.conj()),
+                    (false, false) => accum = &accum + &(lhs * rhs),
+                }
+            }
+            accum = &accum * &beta;
+
+            let dst = dst.wrapping_offset(row as isize * dst_rs + col as isize * dst_cs);
+            if read_dst {
+                match conj_dst {
+                    true => accum = &accum + &(&alpha * (*dst).conj()),
+                    false => accum = &accum + &(&alpha * &*dst),
+                }
             }
             *dst = accum
         });

@@ -13,6 +13,9 @@ pub(crate) type MicroKernelFn<T> = unsafe fn(
     T,
     T,
     u8,
+    bool,
+    bool,
+    bool,
 );
 
 // microkernel_fn_array!{
@@ -127,6 +130,9 @@ macro_rules! microkernel {
             alpha: T,
             beta: T,
             alpha_status: u8,
+            _conj_dst: bool,
+            _conj_lhs: bool,
+            _conj_rhs: bool,
         ) {
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
@@ -460,9 +466,15 @@ macro_rules! microkernel_cplx {
             alpha: num_complex::Complex<T>,
             beta: num_complex::Complex<T>,
             alpha_status: u8,
+            conj_dst: bool,
+            conj_lhs: bool,
+            conj_rhs: bool,
         ) {
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
+
+            let conj_both_lhs_rhs = conj_lhs;
+            let conj_rhs = conj_lhs != conj_rhs;
 
             let mut lhs_re_im = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
             let mut lhs_im_re = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
@@ -485,12 +497,12 @@ macro_rules! microkernel_cplx {
 
             impl KernelIter {
                 #[inline(always)]
-                unsafe fn execute(self, iter: usize) {
+                unsafe fn execute(self, iter: usize, conj_rhs: bool) {
                     let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
                     let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                        let tmp = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                        let tmp = (packed_lhs.add(M_ITER * CPLX_N) as *const Pack).read_unaligned();
                         *self.lhs_re_im.add(M_ITER) = tmp;
                         *self.lhs_im_re.add(M_ITER) = swap_re_im(tmp);
                     }});
@@ -502,15 +514,13 @@ macro_rules! microkernel_cplx {
                         let accum = self.accum.add(N_ITER * $mr_div_n);
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let accum = &mut *accum.add(M_ITER);
-                            *accum = mul_add(
+                            *accum = mul_add_cplx(
                                 *self.lhs_re_im.add(M_ITER),
-                                *self.rhs_re,
-                                *accum,
-                            );
-                            *accum = mul_add(
                                 *self.lhs_im_re.add(M_ITER),
+                                *self.rhs_re,
                                 *self.rhs_im,
                                 *accum,
+                                conj_rhs,
                             );
                         }});
                     });
@@ -521,75 +531,176 @@ macro_rules! microkernel_cplx {
             let k_leftover = k % 4;
 
             loop {
-                let mut depth = k_unroll;
-                if depth != 0 {
-                    loop {
-                        let iter = KernelIter {
-                            packed_lhs,
-                            packed_rhs,
-                            lhs_cs,
-                            rhs_rs,
-                            rhs_cs,
-                            accum,
-                            lhs_re_im: lhs_re_im.as_mut_ptr() as _,
-                            lhs_im_re: lhs_im_re.as_mut_ptr() as _,
-                            rhs_re: &mut rhs_re as *mut _ as _,
-                            rhs_im: &mut rhs_im as *mut _ as _,
-                        };
+                if conj_rhs {
+                    let mut depth = k_unroll;
+                    if depth != 0 {
+                        loop {
+                            let iter = KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                                lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                                rhs_re: &mut rhs_re as *mut _ as _,
+                                rhs_im: &mut rhs_im as *mut _ as _,
+                            };
 
-                        seq_macro::seq!(UNROLL_ITER in 0..4 {
-                            iter.execute(UNROLL_ITER);
-                        });
+                            seq_macro::seq!(UNROLL_ITER in 0..4 {
+                                iter.execute(UNROLL_ITER, true);
+                            });
 
-                        packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                        packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
 
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
                         }
                     }
-                }
-                depth = k_leftover;
-                if depth != 0 {
-                    loop {
-                        KernelIter {
-                            packed_lhs,
-                            packed_rhs,
-                            lhs_cs,
-                            rhs_rs,
-                            rhs_cs,
-                            accum,
-                            lhs_re_im: lhs_re_im.as_mut_ptr() as _,
-                            lhs_im_re: lhs_im_re.as_mut_ptr() as _,
-                            rhs_re: &mut rhs_re as *mut _ as _,
-                            rhs_im: &mut rhs_im as *mut _ as _,
-                        }
-                        .execute(0);
+                    depth = k_leftover;
+                    if depth != 0 {
+                        loop {
+                            KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                                lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                                rhs_re: &mut rhs_re as *mut _ as _,
+                                rhs_im: &mut rhs_im as *mut _ as _,
+                            }
+                            .execute(0, true);
 
-                        packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
-                        packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+                            packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
 
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
                         }
                     }
+                    break;
+                } else {
+                    let mut depth = k_unroll;
+                    if depth != 0 {
+                        loop {
+                            let iter = KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                                lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                                rhs_re: &mut rhs_re as *mut _ as _,
+                                rhs_im: &mut rhs_im as *mut _ as _,
+                            };
+
+                            seq_macro::seq!(UNROLL_ITER in 0..4 {
+                                iter.execute(UNROLL_ITER, false);
+                            });
+
+                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    depth = k_leftover;
+                    if depth != 0 {
+                        loop {
+                            KernelIter {
+                                packed_lhs,
+                                packed_rhs,
+                                lhs_cs,
+                                rhs_rs,
+                                rhs_cs,
+                                accum,
+                                lhs_re_im: lhs_re_im.as_mut_ptr() as _,
+                                lhs_im_re: lhs_im_re.as_mut_ptr() as _,
+                                rhs_re: &mut rhs_re as *mut _ as _,
+                                rhs_im: &mut rhs_im as *mut _ as _,
+                            }
+                            .execute(0, false);
+
+                            packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    break;
                 }
-                break;
             }
 
-            if m == $mr_div_n * N && n == $nr {
+            if conj_both_lhs_rhs {
+                seq_macro::seq!(N_ITER in 0..$nr {
+                    let accum = accum.add(N_ITER * $mr_div_n);
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        let accum = &mut *accum.add(M_ITER);
+                        *accum = conj(*accum);
+                    }});
+                });
+            }
+
+            if m == $mr_div_n * CPLX_N && n == $nr && dst_rs == 1 {
                 let alpha_re = splat(alpha.re);
                 let alpha_im = splat(alpha.im);
                 let beta_re = splat(beta.re);
                 let beta_im = splat(beta.im);
-                if dst_rs == 1 {
 
+                if conj_dst {
                     if alpha_status == 2 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = add(
+                                    mul_cplx(conj(*dst), swap_re_im(conj(*dst)), alpha_re, alpha_im),
+                                    mul_cplx(accum, swap_re_im(accum), beta_re, beta_im),
+                                );
+                            }});
+                        });
+                    } else if alpha_status == 1 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = add(
+                                    conj(*dst),
+                                    mul_cplx(accum, swap_re_im(accum), beta_re, beta_im),
+                                );
+                            }});
+                        });
+                    } else {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
+                                *dst = mul_cplx(accum, swap_re_im(accum), beta_re, beta_im);
+                            }});
+                        });
+                    }
+                } else {
+                    if alpha_status == 2 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
                                 let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
                                 *dst = add(
                                     mul_cplx(*dst, swap_re_im(*dst), alpha_re, alpha_im),
@@ -600,7 +711,7 @@ macro_rules! microkernel_cplx {
                     } else if alpha_status == 1 {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
                                 let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
                                 *dst = add(
                                     *dst,
@@ -611,53 +722,91 @@ macro_rules! microkernel_cplx {
                     } else {
                         seq_macro::seq!(N_ITER in 0..$nr {
                             seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                let dst = dst.offset(M_ITER * CPLX_N as isize + N_ITER * dst_cs) as *mut Pack;
                                 let accum = *accum.offset(M_ITER + $mr_div_n * N_ITER);
                                 *dst = mul_cplx(accum, swap_re_im(accum), beta_re, beta_im);
                             }});
                         });
                     }
-                } else {
-                    todo!()
                 }
             } else {
                 let src = accum_storage; // write to stack
-                let src = src.as_ptr() as *const T;
+                let src = src.as_ptr() as *const num_complex::Complex<T>;
 
-                if alpha_status == 2 {
-                    for j in 0..n {
-                        let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                if conj_dst {
+                    if alpha_status == 2 {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
 
-                        for i in 0..m {
-                            let dst_ij = dst_j.offset(dst_rs * i as isize);
-                            let src_ij = src_j.add(i);
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
 
-                            *dst_ij = alpha * *dst_ij + beta * *src_ij;
+                                *dst_ij = alpha * (*dst_ij).conj() + beta * *src_ij;
+                            }
                         }
-                    }
-                } else if alpha_status == 1 {
-                    for j in 0..n {
-                        let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                    } else if alpha_status == 1 {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
 
-                        for i in 0..m {
-                            let dst_ij = dst_j.offset(dst_rs * i as isize);
-                            let src_ij = src_j.add(i);
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
 
-                            *dst_ij = *dst_ij + beta * *src_ij;
+                                *dst_ij = (*dst_ij).conj() + beta * *src_ij;
+                            }
+                        }
+                    } else {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
+
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
+
+                                *dst_ij = beta * *src_ij;
+                            }
                         }
                     }
                 } else {
-                    for j in 0..n {
-                        let dst_j = dst.offset(dst_cs * j as isize);
-                        let src_j = src.add(j * $mr_div_n * N);
+                    if alpha_status == 2 {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
 
-                        for i in 0..m {
-                            let dst_ij = dst_j.offset(dst_rs * i as isize);
-                            let src_ij = src_j.add(i);
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
 
-                            *dst_ij = beta * *src_ij;
+                                *dst_ij = alpha * *dst_ij + beta * *src_ij;
+                            }
+                        }
+                    } else if alpha_status == 1 {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
+
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
+
+                                *dst_ij = *dst_ij + beta * *src_ij;
+                            }
+                        }
+                    } else {
+                        for j in 0..n {
+                            let dst_j = dst.offset(dst_cs * j as isize);
+                            let src_j = src.add(j * $mr_div_n * CPLX_N);
+
+                            for i in 0..m {
+                                let dst_ij = dst_j.offset(dst_rs * i as isize);
+                                let src_ij = src_j.add(i);
+
+                                *dst_ij = beta * *src_ij;
+                            }
                         }
                     }
                 }
@@ -1072,6 +1221,7 @@ pub mod fma {
 
         type T = f32;
         const N: usize = 8;
+        const CPLX_N: usize = 4;
         type Pack = [T; N];
 
         #[inline(always)]
@@ -1112,6 +1262,54 @@ pub mod fma {
             transmute(_mm256_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
+        #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            const MASK: __m256 = unsafe {
+                transmute([
+                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
+                ])
+            };
+            transmute(_mm256_xor_ps(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            transmute(_mm256_permute_ps::<0b10110001>(transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            transmute(_mm256_fmaddsub_ps(
+                transmute(a_re_im),
+                transmute(b_re),
+                _mm256_mul_ps(transmute(a_im_re), transmute(b_im)),
+            ))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                transmute(_mm256_fmsubadd_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm256_fmsubadd_ps(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            } else {
+                transmute(_mm256_fmaddsub_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm256_fmaddsub_ps(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            }
+        }
+
         microkernel!(["fma"], x1x1, 1, 1);
         microkernel!(["fma"], x1x2, 1, 2);
         microkernel!(["fma"], x1x3, 1, 3);
@@ -1132,6 +1330,21 @@ pub mod fma {
             [x2x1, x2x2, x2x3, x2x4,],
             [x3x1, x3x2, x3x3, x3x4,],
         }
+
+        microkernel_cplx!(["fma"], cplx_x1x1, 1, 1);
+        microkernel_cplx!(["fma"], cplx_x1x2, 1, 2);
+
+        microkernel_cplx!(["fma"], cplx_x2x1, 2, 1);
+        microkernel_cplx!(["fma"], cplx_x2x2, 2, 2);
+
+        microkernel_cplx!(["fma"], cplx_x3x1, 3, 1);
+        microkernel_cplx!(["fma"], cplx_x3x2, 3, 2);
+
+        microkernel_cplx_fn_array! {
+            [cplx_x1x1, cplx_x1x2,],
+            [cplx_x2x1, cplx_x2x2,],
+            [cplx_x3x1, cplx_x3x2,],
+        }
     }
 
     pub mod f64 {
@@ -1144,6 +1357,7 @@ pub mod fma {
 
         type T = f64;
         const N: usize = 4;
+        const CPLX_N: usize = 2;
         type Pack = [T; N];
 
         #[inline(always)]
@@ -1184,6 +1398,50 @@ pub mod fma {
             transmute(_mm256_fmadd_pd(transmute(a), transmute(b), transmute(c)))
         }
 
+        #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            const MASK: __m256d = unsafe { transmute([0.0_f64, -0.0_f64, 0.0_f64, -0.0_f64]) };
+            transmute(_mm256_xor_pd(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            transmute(_mm256_permute_pd::<0b0101>(transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            transmute(_mm256_fmaddsub_pd(
+                transmute(a_re_im),
+                transmute(b_re),
+                _mm256_mul_pd(transmute(a_im_re), transmute(b_im)),
+            ))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                transmute(_mm256_fmsubadd_pd(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm256_fmsubadd_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            } else {
+                transmute(_mm256_fmaddsub_pd(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm256_fmaddsub_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            }
+        }
+
         microkernel!(["fma"], x1x1, 1, 1);
         microkernel!(["fma"], x1x2, 1, 2);
         microkernel!(["fma"], x1x3, 1, 3);
@@ -1204,6 +1462,24 @@ pub mod fma {
             [x2x1, x2x2, x2x3, x2x4,],
             [x3x1, x3x2, x3x3, x3x4,],
         }
+
+        microkernel_cplx!(["fma"], cplx_x1x1, 1, 1);
+        microkernel_cplx!(["fma"], cplx_x1x2, 1, 2);
+        microkernel_cplx!(["fma"], cplx_x1x3, 1, 3);
+
+        microkernel_cplx!(["fma"], cplx_x2x1, 2, 1);
+        microkernel_cplx!(["fma"], cplx_x2x2, 2, 2);
+        microkernel_cplx!(["fma"], cplx_x2x3, 2, 3);
+
+        microkernel_cplx!(["fma"], cplx_x3x1, 3, 1);
+        microkernel_cplx!(["fma"], cplx_x3x2, 3, 2);
+        microkernel_cplx!(["fma"], cplx_x3x3, 3, 3);
+
+        microkernel_cplx_fn_array! {
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3,],
+        }
     }
 }
 
@@ -1219,6 +1495,7 @@ pub mod avx512f {
 
         type T = f32;
         const N: usize = 16;
+        const CPLX_N: usize = 8;
         type Pack = [T; N];
 
         #[inline(always)]
@@ -1260,6 +1537,17 @@ pub mod avx512f {
         }
 
         #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            const MASK: __m512i = unsafe {
+                transmute([
+                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
+                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
+                ])
+            };
+            transmute(_mm512_xor_si512(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
         unsafe fn swap_re_im(a: Pack) -> Pack {
             transmute(_mm512_permute_ps::<0b10110001>(transmute(a)))
         }
@@ -1271,6 +1559,30 @@ pub mod avx512f {
                 transmute(b_re),
                 _mm512_mul_ps(transmute(a_im_re), transmute(b_im)),
             ))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                transmute(_mm512_fmsubadd_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm512_fmsubadd_ps(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            } else {
+                transmute(_mm512_fmaddsub_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm512_fmaddsub_ps(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            }
         }
 
         microkernel!(["avx512f"], x1x1, 1, 1);
@@ -1337,6 +1649,7 @@ pub mod avx512f {
 
         type T = f64;
         const N: usize = 8;
+        const CPLX_N: usize = 4;
         type Pack = [T; N];
 
         #[inline(always)]
@@ -1395,6 +1708,16 @@ pub mod avx512f {
         }
 
         #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            const MASK: __m512i = unsafe {
+                transmute([
+                    0.0_f64, -0.0_f64, 0.0_f64, -0.0_f64, 0.0_f64, -0.0_f64, 0.0_f64, -0.0_f64,
+                ])
+            };
+            transmute(_mm512_xor_si512(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
         unsafe fn swap_re_im(a: Pack) -> Pack {
             transmute(_mm512_permute_pd::<0b01010101>(transmute(a)))
         }
@@ -1406,6 +1729,30 @@ pub mod avx512f {
                 transmute(b_re),
                 _mm512_mul_pd(transmute(a_im_re), transmute(b_im)),
             ))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                transmute(_mm512_fmsubadd_pd(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm512_fmsubadd_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            } else {
+                transmute(_mm512_fmaddsub_pd(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    _mm512_fmaddsub_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                ))
+            }
         }
 
         microkernel!(["avx512f"], x1x1, 1, 1);
