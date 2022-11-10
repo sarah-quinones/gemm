@@ -162,9 +162,8 @@ mod tests {
     #[test]
     fn test_gemm_cplx() {
         let mut mnks = vec![];
-        mnks.push((1024, 1024, 1));
+        mnks.push((6, 3, 1));
         mnks.push((1, 1, 2));
-        mnks.push((64, 64, 4));
         mnks.push((256, 256, 256));
         mnks.push((16, 1, 1));
         mnks.push((16, 2, 1));
@@ -179,6 +178,7 @@ mod tests {
         mnks.push((16, 8, 1));
         mnks.push((4, 4, 4));
         mnks.push((1024, 1024, 4));
+        mnks.push((1024, 1024, 1));
         mnks.push((63, 1, 10));
         mnks.push((63, 2, 10));
         mnks.push((63, 3, 10));
@@ -258,6 +258,7 @@ mod tests {
                                         conj_rhs,
                                     );
                                 }
+                                dbg!(&c_vec, &d_vec);
                                 for (c, d) in c_vec.iter().zip(d_vec.iter()) {
                                     assert_approx_eq::assert_approx_eq!(c, d);
                                 }

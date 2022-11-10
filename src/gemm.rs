@@ -102,27 +102,29 @@ unsafe fn gemm_basic_generic<
         alpha.set_zero();
     }
 
-    // if k <= 2 {
-    //     gevv::gevv(
-    //         simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
-    //         beta, mul_add,
-    //     );
-    //     return;
-    // }
-    // if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
-    //     gemv::gemv(
-    //         simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, alpha,
-    //         beta, mul_add,
-    //     );
-    //     return;
-    // }
-    // if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
-    //     gemv::gemv(
-    //         simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, alpha,
-    //         beta, mul_add,
-    //     );
-    //     return;
-    // }
+    if !conj_dst && !conj_lhs && !conj_rhs {
+        if k <= 2 {
+            gevv::gevv(
+                simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta, mul_add,
+            );
+            return;
+        }
+        if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
+            gemv::gemv(
+                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+                alpha, beta, mul_add,
+            );
+            return;
+        }
+        if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
+            gemv::gemv(
+                simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta, mul_add,
+            );
+            return;
+        }
+    }
 
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
 
