@@ -426,6 +426,251 @@ macro_rules! microkernel {
     };
 }
 
+macro_rules! cplx_microkernel {
+    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
+        #[inline]
+        $(#[target_feature(enable = $target)])?
+        // 0, 1, or 2 for generic alpha
+        pub unsafe fn $name(
+            m: usize,
+            n: usize,
+            k: usize,
+            dst: *mut T,
+            mut packed_lhs: *const num_complex::Complex<T>,
+            mut packed_rhs: *const num_complex::Complex<T>,
+            dst_cs: isize,
+            dst_rs: isize,
+            lhs_cs: isize,
+            rhs_rs: isize,
+            rhs_cs: isize,
+            alpha: num_complex::Complex<T>,
+            beta: num_complex::Complex<T>,
+            alpha_status: u8,
+        ) {
+            let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
+            let accum = accum_storage.as_mut_ptr() as *mut Pack;
+
+            let mut lhs = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
+            let mut rhs = ::core::mem::MaybeUninit::<Pack>::uninit();
+
+            #[derive(Copy, Clone)]
+            struct KernelIter {
+                packed_lhs: *const T,
+                packed_rhs: *const T,
+                lhs_cs: isize,
+                rhs_rs: isize,
+                rhs_cs: isize,
+                accum: *mut Pack,
+                lhs: *mut Pack,
+                rhs: *mut Pack,
+            }
+
+            impl KernelIter {
+                #[inline(always)]
+                unsafe fn execute(self, iter: usize) {
+                    let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
+                    let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
+
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {
+                        *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                    });
+
+                    seq_macro::seq!(N_ITER in 0..$nr {
+                        *self.rhs = splat(*packed_rhs.wrapping_offset(N_ITER * self.rhs_cs));
+                        let accum = self.accum.add(N_ITER * $mr_div_n);
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            let accum = &mut *accum.add(M_ITER);
+                            *accum = mul_add(
+                                *self.lhs.add(M_ITER),
+                                *self.rhs,
+                                *accum,
+                            );
+                        }});
+                    });
+                }
+            }
+
+            let k_unroll = k / 4;
+            let k_leftover = k % 4;
+
+            loop {
+                let mut depth = k_unroll;
+                if depth != 0 {
+                    loop {
+                        let iter = KernelIter {
+                            packed_lhs,
+                            packed_rhs,
+                            lhs_cs,
+                            rhs_rs,
+                            rhs_cs,
+                            accum,
+                            lhs: lhs.as_mut_ptr() as _,
+                            rhs: &mut rhs as *mut _ as _,
+                        };
+
+                        seq_macro::seq!(UNROLL_ITER in 0..4 {
+                            iter.execute(UNROLL_ITER);
+                        });
+
+                        packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
+                        packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+                depth = k_leftover;
+                if depth != 0 {
+                    loop {
+                        KernelIter {
+                            packed_lhs,
+                            packed_rhs,
+                            lhs_cs,
+                            rhs_rs,
+                            rhs_cs,
+                            accum,
+                            lhs: lhs.as_mut_ptr() as _,
+                            rhs: &mut rhs as *mut _ as _,
+                        }
+                        .execute(0);
+
+                        packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                        packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+
+            if m == $mr_div_n * N && n == $nr {
+                let alpha = splat(alpha);
+                let beta = splat(beta);
+                if dst_rs == 1 {
+
+                    if alpha_status == 2 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                dst.write_unaligned(add(
+                                    mul(alpha, dst.read_unaligned()),
+                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                ));
+                            }});
+                        });
+                    } else if alpha_status == 1 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                dst.write_unaligned(mul_add(
+                                    beta,
+                                    *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                    dst.read_unaligned(),
+                                ));
+                            }});
+                        });
+                    } else {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                                dst.write_unaligned(mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)));
+                            }});
+                        });
+                    }
+                } else {
+                    if alpha_status == 2 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                                scatter(
+                                    dst,
+                                    dst_rs,
+                                    add(
+                                        mul(alpha, gather(dst, dst_rs)),
+                                        mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                    ),
+                                );
+                            }});
+                        });
+                    } else if alpha_status == 1 {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                                scatter(
+                                    dst,
+                                    dst_rs,
+                                    mul_add(
+                                        beta,
+                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                        gather(dst, dst_rs),
+                                    ),
+                                );
+                            }});
+                        });
+                    } else {
+                        seq_macro::seq!(N_ITER in 0..$nr {
+                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
+                                scatter(
+                                    dst,
+                                    dst_rs,
+                                    mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
+                                );
+                            }});
+                        });
+                    }
+                }
+            } else {
+                let src = accum_storage; // write to stack
+                let src = src.as_ptr() as *const T;
+
+                if alpha_status == 2 {
+                    for j in 0..n {
+                        let dst_j = dst.offset(dst_cs * j as isize);
+                        let src_j = src.add(j * $mr_div_n * N);
+
+                        for i in 0..m {
+                            let dst_ij = dst_j.offset(dst_rs * i as isize);
+                            let src_ij = src_j.add(i);
+
+                            *dst_ij = alpha * *dst_ij + beta * *src_ij;
+                        }
+                    }
+                } else if alpha_status == 1 {
+                    for j in 0..n {
+                        let dst_j = dst.offset(dst_cs * j as isize);
+                        let src_j = src.add(j * $mr_div_n * N);
+
+                        for i in 0..m {
+                            let dst_ij = dst_j.offset(dst_rs * i as isize);
+                            let src_ij = src_j.add(i);
+
+                            *dst_ij = *dst_ij + beta * *src_ij;
+                        }
+                    }
+                } else {
+                    for j in 0..n {
+                        let dst_j = dst.offset(dst_cs * j as isize);
+                        let src_j = src.add(j * $mr_div_n * N);
+
+                        for i in 0..m {
+                            let dst_ij = dst_j.offset(dst_rs * i as isize);
+                            let src_ij = src_j.add(i);
+
+                            *dst_ij = beta * *src_ij;
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
 pub mod scalar {
     pub mod f32 {
         use core::mem::MaybeUninit;
