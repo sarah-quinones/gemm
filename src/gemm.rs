@@ -672,7 +672,7 @@ macro_rules! gemm_def {
                 }
             }
 
-            unreachable!()
+            scalar_cplx::gemm_basic_cplx
         }
 
         lazy_static::lazy_static! {
@@ -684,6 +684,7 @@ macro_rules! gemm_def {
         }
 
         __inject_mod!(scalar, $ty, 1, Scalar);
+        __inject_mod_cplx!(scalar, $ty, 1, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         __inject_mod!(sse, $ty, 2 * $multiplier, Sse);
@@ -825,7 +826,7 @@ pub unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else {
-        unreachable!();
+        panic!();
     }
 }
 

@@ -164,7 +164,7 @@ mod tests {
         let mut mnks = vec![];
         mnks.push((6, 3, 1));
         mnks.push((1, 1, 2));
-        mnks.push((256, 256, 256));
+        mnks.push((128, 128, 128));
         mnks.push((16, 1, 1));
         mnks.push((16, 2, 1));
         mnks.push((16, 3, 1));
@@ -258,7 +258,6 @@ mod tests {
                                         conj_rhs,
                                     );
                                 }
-                                dbg!(&c_vec, &d_vec);
                                 for (c, d) in c_vec.iter().zip(d_vec.iter()) {
                                     assert_approx_eq::assert_approx_eq!(c, d);
                                 }

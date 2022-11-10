@@ -875,6 +875,7 @@ pub mod scalar {
             [x1x1, x1x2, x1x3, x1x4,],
             [x2x1, x2x2, x2x3, x2x4,],
         }
+        pub use super::c32::*;
     }
 
     pub mod f64 {
@@ -933,6 +934,145 @@ pub mod scalar {
         microkernel!(, x2x4, 2, 4);
 
         microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
+
+        pub use super::c64::*;
+    }
+
+    pub mod c32 {
+        type T = f32;
+        const N: usize = 2;
+        const CPLX_N: usize = 1;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            [value, value]
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            [lhs[0] + rhs[0], lhs[1] + rhs[1]]
+        }
+
+        #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            [a[0], -a[1]]
+        }
+
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            [a[1], a[0]]
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, _a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            [
+                a_re_im[0] * b_re[0] - a_re_im[1] * b_im[0],
+                a_re_im[1] * b_re[0] + a_re_im[0] * b_im[0],
+            ]
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                add(c_re_im, mul_cplx(a_re_im, a_im_re, b_re, b_im))
+            } else {
+                add(
+                    c_re_im,
+                    mul_cplx(a_re_im, a_im_re, b_re, [-b_im[0], -b_im[0]]),
+                )
+            }
+        }
+
+        microkernel_cplx!(, x1x1, 1, 1);
+        microkernel_cplx!(, x1x2, 1, 2);
+        microkernel_cplx!(, x1x3, 1, 3);
+        microkernel_cplx!(, x1x4, 1, 4);
+
+        microkernel_cplx!(, x2x1, 2, 1);
+        microkernel_cplx!(, x2x2, 2, 2);
+        microkernel_cplx!(, x2x3, 2, 3);
+        microkernel_cplx!(, x2x4, 2, 4);
+
+        microkernel_cplx_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
+    }
+    pub mod c64 {
+        type T = f64;
+        const N: usize = 2;
+        const CPLX_N: usize = 1;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            [value, value]
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            [lhs[0] + rhs[0], lhs[1] + rhs[1]]
+        }
+
+        #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            [a[0], -a[1]]
+        }
+
+        #[inline(always)]
+        unsafe fn swap_re_im(a: Pack) -> Pack {
+            [a[1], a[0]]
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(a_re_im: Pack, _a_im_re: Pack, b_re: Pack, b_im: Pack) -> Pack {
+            [
+                a_re_im[0] * b_re[0] - a_re_im[1] * b_im[0],
+                a_re_im[1] * b_re[0] + a_re_im[0] * b_im[0],
+            ]
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(
+            a_re_im: Pack,
+            a_im_re: Pack,
+            b_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            conj_rhs: bool,
+        ) -> Pack {
+            if conj_rhs {
+                add(
+                    c_re_im,
+                    mul_cplx(a_re_im, a_im_re, b_re, [-b_im[0], -b_im[1]]),
+                )
+            } else {
+                add(c_re_im, mul_cplx(a_re_im, a_im_re, b_re, b_im))
+            }
+        }
+
+        microkernel_cplx!(, x1x1, 1, 1);
+        microkernel_cplx!(, x1x2, 1, 2);
+        microkernel_cplx!(, x1x3, 1, 3);
+        microkernel_cplx!(, x1x4, 1, 4);
+
+        microkernel_cplx!(, x2x1, 2, 1);
+        microkernel_cplx!(, x2x2, 2, 2);
+        microkernel_cplx!(, x2x3, 2, 3);
+        microkernel_cplx!(, x2x4, 2, 4);
+
+        microkernel_cplx_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
             [x2x1, x2x2, x2x3, x2x4,],
         }
