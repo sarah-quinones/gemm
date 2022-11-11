@@ -55,12 +55,49 @@ thread_local! {
     ));
 }
 
+trait Conj: Copy {
+    fn conj(self) -> Self;
+}
+
+impl Conj for f32 {
+    #[inline(always)]
+    fn conj(self) -> Self {
+        self
+    }
+}
+impl Conj for f64 {
+    #[inline(always)]
+    fn conj(self) -> Self {
+        self
+    }
+}
+
+impl Conj for c32 {
+    #[inline(always)]
+    fn conj(self) -> Self {
+        c32 {
+            re: self.re,
+            im: -self.im,
+        }
+    }
+}
+impl Conj for c64 {
+    #[inline(always)]
+    fn conj(self) -> Self {
+        c64 {
+            re: self.re,
+            im: -self.im,
+        }
+    }
+}
+
 #[inline(always)]
 unsafe fn gemm_basic_generic<
     S: Simd,
     T: Copy
         + Zero
         + One
+        + Conj
         + Send
         + Sync
         + core::fmt::Debug
@@ -100,6 +137,32 @@ unsafe fn gemm_basic_generic<
     }
     if !read_dst {
         alpha.set_zero();
+    }
+
+    if k == 0 {
+        // dst = alpha * conj?(dst)
+
+        if alpha.is_zero() {
+            for j in 0..n {
+                for i in 0..m {
+                    *dst.offset(i as isize * dst_rs + j as isize * dst_cs) = T::zero();
+                }
+            }
+            return;
+        }
+
+        if alpha.is_one() && !conj_dst {
+            return;
+        }
+
+        if conj_dst {
+            for j in 0..n {
+                for i in 0..m {
+                    let dst = dst.offset(i as isize * dst_rs + j as isize * dst_cs);
+                    *dst = alpha * (*dst).conj();
+                }
+            }
+        }
     }
 
     if !conj_dst && !conj_lhs && !conj_rhs {
