@@ -1,6 +1,6 @@
 [package]
 name = "gemm"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
@@ -11,12 +11,12 @@ keywords = ["linear-algebra"]
 
 [dependencies]
 lazy_static = "1.4"
-raw-cpuid = "10.3"
+raw-cpuid = "10.6"
 seq-macro = "0.3"
 dyn-stack = "0.8"
 num-traits = "0.2"
 num-complex = "0.4"
-rayon = { version = "1.5", optional = true }
+rayon = { version = "1.6", optional = true }
 paste = "1.0.9"
 
 [features]
@@ -25,11 +25,11 @@ std = []
 nightly = []
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.4"
 rand = "0.8.5"
-nalgebra = "0.31.0"
+nalgebra = "0.31.4"
 assert_approx_eq = "1.1.0"
-rayon = "1.5"
+rayon = "1.6"
 
 [[bench]]
 name = "bench"
