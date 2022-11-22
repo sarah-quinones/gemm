@@ -34,3 +34,11 @@ rayon = "1.6"
 [[bench]]
 name = "bench"
 harness = false
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true
+
+[profile.bench]
+debug-assertions = false
+overflow-checks = false

@@ -162,7 +162,15 @@ unsafe fn gemm_basic_generic<
                     *dst = alpha * (*dst).conj();
                 }
             }
+        } else {
+            for j in 0..n {
+                for i in 0..m {
+                    let dst = dst.offset(i as isize * dst_rs + j as isize * dst_cs);
+                    *dst = alpha * *dst;
+                }
+            }
         }
+        return;
     }
 
     if !conj_dst && !conj_lhs && !conj_rhs {
@@ -343,7 +351,7 @@ unsafe fn gemm_basic_generic<
                             continue;
                         }
 
-                        let packing_threshold = if n_threads == 1 { 8 } else { 64 };
+                        let packing_threshold = 8;
                         let do_pack_lhs =
                             (m_chunk % N != 0) || lhs_rs != 1 || n_chunk > packing_threshold * NR;
                         let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
@@ -949,14 +957,14 @@ pub unsafe fn gemm<T: 'static>(
         )
     };
 
-    if dst_rs < 0 {
+    if dst_rs < 0 && m > 0 {
         dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
         dst_rs = -dst_rs;
         lhs = lhs.wrapping_offset((m - 1) as isize * lhs_rs);
         lhs_rs = -lhs_rs;
     }
 
-    if dst_cs < 0 {
+    if dst_cs < 0 && n > 0 {
         dst = dst.wrapping_offset((n - 1) as isize * dst_cs);
         dst_cs = -dst_cs;
         rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);

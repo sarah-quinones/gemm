@@ -71,7 +71,11 @@ mod tests {
     #[test]
     fn test_gemm() {
         let mut mnks = vec![];
+        mnks.push((0, 64, 4));
+        mnks.push((64, 0, 4));
+        mnks.push((0, 0, 4));
         mnks.push((64, 64, 4));
+        mnks.push((64, 64, 0));
         mnks.push((256, 256, 256));
         mnks.push((16, 1, 1));
         mnks.push((16, 2, 1));
@@ -162,6 +166,11 @@ mod tests {
     #[test]
     fn test_gemm_cplx() {
         let mut mnks = vec![];
+        mnks.push((0, 64, 4));
+        mnks.push((64, 0, 4));
+        mnks.push((0, 0, 4));
+        mnks.push((64, 64, 4));
+        mnks.push((64, 64, 0));
         mnks.push((6, 3, 1));
         mnks.push((1, 1, 2));
         mnks.push((128, 128, 128));
