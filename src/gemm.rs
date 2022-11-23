@@ -6,13 +6,14 @@ use crate::{
     simd::Simd,
     Parallelism, Ptr,
 };
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{any::TypeId, cell::RefCell};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
 use num_traits::{One, Zero};
 
 // https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
-pub const CACHELINE_ALIGN: usize = {
+const CACHELINE_ALIGN: usize = {
     #[cfg(any(
         target_arch = "x86_64",
         target_arch = "aarch64",
@@ -89,6 +90,54 @@ impl Conj for c64 {
             im: -self.im,
         }
     }
+}
+
+pub const DEFAULT_THREADING_THRESHOLD: usize = 48 * 48 * 256;
+pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 2;
+pub const DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD: usize = 8;
+pub const DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD: usize = 16;
+
+const THREADING_THRESHOLD: AtomicUsize = AtomicUsize::new(DEFAULT_THREADING_THRESHOLD);
+const RHS_PACKING_THRESHOLD: AtomicUsize = AtomicUsize::new(DEFAULT_RHS_PACKING_THRESHOLD);
+const LHS_PACKING_THRESHOLD_SINGLE_THREAD: AtomicUsize =
+    AtomicUsize::new(DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD);
+const LHS_PACKING_THRESHOLD_MULTI_THREAD: AtomicUsize =
+    AtomicUsize::new(DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD);
+
+#[inline]
+pub fn get_threading_threshold() -> usize {
+    THREADING_THRESHOLD.load(Ordering::Relaxed)
+}
+#[inline]
+pub fn set_threading_threshold(value: usize) {
+    THREADING_THRESHOLD.store(value, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn get_rhs_packing_threshold() -> usize {
+    RHS_PACKING_THRESHOLD.load(Ordering::Relaxed)
+}
+#[inline]
+pub fn set_rhs_packing_threshold(value: usize) {
+    RHS_PACKING_THRESHOLD.store(value.min(256), Ordering::Relaxed);
+}
+
+#[inline]
+pub fn get_lhs_packing_threshold_single_thread() -> usize {
+    LHS_PACKING_THRESHOLD_SINGLE_THREAD.load(Ordering::Relaxed)
+}
+#[inline]
+pub fn set_lhs_packing_threshold_single_thread(value: usize) {
+    LHS_PACKING_THRESHOLD_SINGLE_THREAD.store(value.min(256), Ordering::Relaxed);
+}
+
+#[inline]
+pub fn get_lhs_packing_threshold_multi_thread() -> usize {
+    LHS_PACKING_THRESHOLD_MULTI_THREAD.load(Ordering::Relaxed)
+}
+#[inline]
+pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
+    LHS_PACKING_THRESHOLD_MULTI_THREAD.store(value.min(256), Ordering::Relaxed);
 }
 
 #[inline(always)]
@@ -211,11 +260,11 @@ unsafe fn gemm_basic_generic<
     // on aarch64-neon, we always pack beyond a certain size, since the microkernel can use the
     // contiguity of the RHS with `vfmaq_laneq_[f32|f64]`
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = m > 2 * MR;
+    let do_pack_rhs = m > get_rhs_packing_threshold() * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
-    let do_pack_rhs = m > 2 * MR && rhs_rs.abs() != 1;
+    let do_pack_rhs = m > get_rhs_packing_threshold() * MR && rhs_rs.abs() != 1;
 
     let mut mem = if do_pack_rhs {
         Some(GlobalMemBuffer::new(StackReq::new_aligned::<T>(
@@ -293,7 +342,7 @@ unsafe fn gemm_basic_generic<
                 Parallelism::None => 1,
                 #[cfg(feature = "rayon")]
                 Parallelism::Rayon(n_threads) => {
-                    let threading_threshold = 48 * 48 * 256;
+                    let threading_threshold = get_threading_threshold();
                     if m * n_chunk * k_chunk <= threading_threshold {
                         1
                     } else {
@@ -351,7 +400,11 @@ unsafe fn gemm_basic_generic<
                             continue;
                         }
 
-                        let packing_threshold = 8;
+                        let packing_threshold = if n_threads == 1 {
+                            get_lhs_packing_threshold_single_thread()
+                        } else {
+                            get_lhs_packing_threshold_multi_thread()
+                        };
                         let do_pack_lhs =
                             (m_chunk % N != 0) || lhs_rs != 1 || n_chunk > packing_threshold * NR;
                         let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
@@ -789,7 +842,7 @@ pub type c32 = num_complex::Complex32;
 #[allow(non_camel_case_types)]
 pub type c64 = num_complex::Complex64;
 
-pub unsafe fn gemm_dispatch<T: 'static>(
+unsafe fn gemm_dispatch<T: 'static>(
     m: usize,
     n: usize,
     k: usize,

@@ -31,7 +31,7 @@ mod microkernel;
 mod pack_operands;
 mod simd;
 
-pub use crate::gemm::{c32, c64, gemm};
+pub use crate::gemm::*;
 
 pub enum Parallelism {
     None,
