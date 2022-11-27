@@ -349,7 +349,7 @@ macro_rules! microkernel {
 
                         packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                         packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
-                        packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
+                        next_lhs = next_lhs.wrapping_offset(lhs_cs);
 
                         depth -= 1;
                         if depth == 0 {
