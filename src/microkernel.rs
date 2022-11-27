@@ -1,3 +1,18 @@
+#[inline(always)]
+fn prefetch(addr: *const ()) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::x86_64::_mm_prefetch::<{ core::arch::x86_64::_MM_HINT_T0 }>(addr as _);
+    }
+
+    #[cfg(target_arch = "x86")]
+    unsafe {
+        core::arch::x86::_mm_prefetch::<{ core::arch::x86::_MM_HINT_T0 }>(addr as _);
+    }
+
+    let _ = addr;
+}
+
 pub(crate) type MicroKernelFn<T> = unsafe fn(
     usize,
     usize,
@@ -16,6 +31,7 @@ pub(crate) type MicroKernelFn<T> = unsafe fn(
     bool,
     bool,
     bool,
+    *const T,
 );
 
 // microkernel_fn_array!{
@@ -133,6 +149,7 @@ macro_rules! microkernel {
             _conj_dst: bool,
             _conj_lhs: bool,
             _conj_rhs: bool,
+            mut next_lhs: *const T,
         ) {
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
@@ -144,6 +161,7 @@ macro_rules! microkernel {
             struct KernelIter {
                 packed_lhs: *const T,
                 packed_rhs: *const T,
+                next_lhs: *const T,
                 lhs_cs: isize,
                 rhs_rs: isize,
                 rhs_cs: isize,
@@ -152,11 +170,19 @@ macro_rules! microkernel {
                 rhs: *mut Pack,
             }
 
+            seq_macro::seq!(N_ITER in 0..$nr {{
+                seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                    let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *const ();
+                    crate::microkernel::prefetch(dst);
+                }});
+            }});
+
             impl KernelIter {
                 #[inline(always)]
                 unsafe fn execute(self, iter: usize) {
                     let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
                     let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
+                    let next_lhs = self.next_lhs.wrapping_offset(iter as isize * self.lhs_cs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                         *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
@@ -174,6 +200,8 @@ macro_rules! microkernel {
                                 );
                         }});
                     }});
+
+                    let _ = next_lhs;
                 }
 
                 $(
@@ -219,6 +247,7 @@ macro_rules! microkernel {
                         loop {
                             let iter = KernelIter {
                                 packed_lhs,
+                                next_lhs,
                                 packed_rhs,
                                 lhs_cs,
                                 rhs_rs,
@@ -234,6 +263,7 @@ macro_rules! microkernel {
 
                             packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -246,6 +276,8 @@ macro_rules! microkernel {
                         loop {
                             KernelIter {
                                 packed_lhs,
+                                next_lhs,
+                                packed_rhs,
                                 packed_rhs,
                                 lhs_cs,
                                 rhs_rs,
@@ -258,6 +290,7 @@ macro_rules! microkernel {
 
                             packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -274,6 +307,7 @@ macro_rules! microkernel {
                     loop {
                         let iter = KernelIter {
                             packed_lhs,
+                            next_lhs,
                             packed_rhs,
                             lhs_cs,
                             rhs_rs,
@@ -289,6 +323,7 @@ macro_rules! microkernel {
 
                         packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
                         packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                        next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
 
                         depth -= 1;
                         if depth == 0 {
@@ -301,6 +336,7 @@ macro_rules! microkernel {
                     loop {
                         KernelIter {
                             packed_lhs,
+                            next_lhs,
                             packed_rhs,
                             lhs_cs,
                             rhs_rs,
@@ -313,6 +349,7 @@ macro_rules! microkernel {
 
                         packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                         packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+                        packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
 
                         depth -= 1;
                         if depth == 0 {
@@ -469,6 +506,7 @@ macro_rules! microkernel_cplx {
             conj_dst: bool,
             conj_lhs: bool,
             conj_rhs: bool,
+            mut next_lhs: *const num_complex::Complex<T>,
         ) {
             let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
@@ -484,6 +522,7 @@ macro_rules! microkernel_cplx {
             #[derive(Copy, Clone)]
             struct KernelIter {
                 packed_lhs: *const num_complex::Complex<T>,
+                next_lhs: *const num_complex::Complex<T>,
                 packed_rhs: *const num_complex::Complex<T>,
                 lhs_cs: isize,
                 rhs_rs: isize,
@@ -500,6 +539,7 @@ macro_rules! microkernel_cplx {
                 unsafe fn execute(self, iter: usize, conj_rhs: bool) {
                     let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
                     let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
+                    let next_lhs = self.next_lhs.wrapping_offset(iter as isize * self.lhs_cs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                         let tmp = (packed_lhs.add(M_ITER * CPLX_N) as *const Pack).read_unaligned();
@@ -524,6 +564,8 @@ macro_rules! microkernel_cplx {
                                 );
                         }});
                     }});
+
+                    let _ = next_lhs;
                 }
             }
 
@@ -537,6 +579,7 @@ macro_rules! microkernel_cplx {
                         loop {
                             let iter = KernelIter {
                                 packed_lhs,
+                                next_lhs,
                                 packed_rhs,
                                 lhs_cs,
                                 rhs_rs,
@@ -554,6 +597,7 @@ macro_rules! microkernel_cplx {
 
                             packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -566,6 +610,7 @@ macro_rules! microkernel_cplx {
                         loop {
                             KernelIter {
                                 packed_lhs,
+                                next_lhs,
                                 packed_rhs,
                                 lhs_cs,
                                 rhs_rs,
@@ -580,6 +625,7 @@ macro_rules! microkernel_cplx {
 
                             packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -593,6 +639,7 @@ macro_rules! microkernel_cplx {
                     if depth != 0 {
                         loop {
                             let iter = KernelIter {
+                                next_lhs,
                                 packed_lhs,
                                 packed_rhs,
                                 lhs_cs,
@@ -611,6 +658,7 @@ macro_rules! microkernel_cplx {
 
                             packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -622,6 +670,7 @@ macro_rules! microkernel_cplx {
                     if depth != 0 {
                         loop {
                             KernelIter {
+                                next_lhs,
                                 packed_lhs,
                                 packed_rhs,
                                 lhs_cs,
@@ -637,6 +686,7 @@ macro_rules! microkernel_cplx {
 
                             packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                             packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset(lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {

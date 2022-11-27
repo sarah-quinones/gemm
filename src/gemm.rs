@@ -424,140 +424,80 @@ unsafe fn gemm_basic_generic<
                             );
                         }
 
-                        let j_then_i = !do_pack_lhs;
-
-                        if j_then_i {
-                            let mut j = 0;
-                            while j < n_col_mini_chunks {
-                                let mut i = 0;
-                                while i < n_row_mini_chunks {
-                                    let col_inner = NR * j;
-                                    let n_chunk_inner = NR.min(n_chunk - col_inner);
-
-                                    let row_inner = MR * i;
-                                    let m_chunk_inner = MR.min(m_chunk - row_inner);
-
-                                    let inner_idx = &mut i;
-                                    if job_id < job_start || job_id >= job_end {
-                                        job_id += 1;
-                                        *inner_idx += 1;
-                                        continue;
-                                    }
-                                    job_id += 1;
-
-                                    let dst = dst.wrapping_offset(
-                                        (row_outer + row_inner) as isize * dst_rs
-                                            + (col_outer + col_inner) as isize * dst_cs,
-                                    );
-
-                                    let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
-                                        [n_chunk_inner - 1];
-
-                                    func(
-                                        m_chunk_inner,
-                                        n_chunk_inner,
-                                        k_chunk,
-                                        dst.0,
-                                        if do_pack_lhs {
-                                            packed_lhs.wrapping_add(i * packed_lhs_stride).0
-                                        } else {
-                                            lhs.wrapping_offset(
-                                                (row_outer + row_inner) as isize * lhs_rs
-                                                    + depth_outer as isize * lhs_cs,
-                                            )
-                                            .0
-                                        },
-                                        if do_pack_rhs {
-                                            packed_rhs.wrapping_add(j * packed_rhs_stride).0
-                                        } else {
-                                            rhs.wrapping_offset(
-                                                depth_outer as isize * rhs_rs
-                                                    + (col_outer + col_inner) as isize * rhs_cs,
-                                            )
-                                            .0
-                                        },
-                                        dst_cs,
-                                        dst_rs,
-                                        packed_lhs_cs,
-                                        packed_rhs_rs,
-                                        packed_rhs_cs,
-                                        alpha,
-                                        beta,
-                                        alpha_status,
-                                        conj_dst,
-                                        conj_lhs,
-                                        conj_rhs,
-                                    );
-                                    i += 1;
-                                }
-                                j += 1;
-                            }
-                        } else {
+                        let mut j = 0;
+                        while j < n_col_mini_chunks {
                             let mut i = 0;
                             while i < n_row_mini_chunks {
-                                let mut j = 0;
-                                while j < n_col_mini_chunks {
-                                    let col_inner = NR * j;
-                                    let n_chunk_inner = NR.min(n_chunk - col_inner);
+                                let col_inner = NR * j;
+                                let n_chunk_inner = NR.min(n_chunk - col_inner);
 
-                                    let row_inner = MR * i;
-                                    let m_chunk_inner = MR.min(m_chunk - row_inner);
+                                let row_inner = MR * i;
+                                let m_chunk_inner = MR.min(m_chunk - row_inner);
 
-                                    let inner_idx = &mut j;
-                                    if job_id < job_start || job_id >= job_end {
-                                        job_id += 1;
-                                        *inner_idx += 1;
-                                        continue;
-                                    }
+                                let inner_idx = &mut i;
+                                if job_id < job_start || job_id >= job_end {
                                     job_id += 1;
-
-                                    let dst = dst.wrapping_offset(
-                                        (row_outer + row_inner) as isize * dst_rs
-                                            + (col_outer + col_inner) as isize * dst_cs,
-                                    );
-
-                                    let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
-                                        [n_chunk_inner - 1];
-
-                                    func(
-                                        m_chunk_inner,
-                                        n_chunk_inner,
-                                        k_chunk,
-                                        dst.0,
-                                        if do_pack_lhs {
-                                            packed_lhs.wrapping_add(i * packed_lhs_stride).0
-                                        } else {
-                                            lhs.wrapping_offset(
-                                                (row_outer + row_inner) as isize * lhs_rs
-                                                    + depth_outer as isize * lhs_cs,
-                                            )
-                                            .0
-                                        },
-                                        if do_pack_rhs {
-                                            packed_rhs.wrapping_add(j * packed_rhs_stride).0
-                                        } else {
-                                            rhs.wrapping_offset(
-                                                depth_outer as isize * rhs_rs
-                                                    + (col_outer + col_inner) as isize * rhs_cs,
-                                            )
-                                            .0
-                                        },
-                                        dst_cs,
-                                        dst_rs,
-                                        packed_lhs_cs,
-                                        packed_rhs_rs,
-                                        packed_rhs_cs,
-                                        alpha,
-                                        beta,
-                                        alpha_status,
-                                        conj_dst,
-                                        conj_lhs,
-                                        conj_rhs,
-                                    );
-                                    j += 1;
+                                    *inner_idx += 1;
+                                    continue;
                                 }
+                                job_id += 1;
+
+                                let dst = dst.wrapping_offset(
+                                    (row_outer + row_inner) as isize * dst_rs
+                                        + (col_outer + col_inner) as isize * dst_cs,
+                                );
+
+                                let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
+                                    [n_chunk_inner - 1];
+
+                                func(
+                                    m_chunk_inner,
+                                    n_chunk_inner,
+                                    k_chunk,
+                                    dst.0,
+                                    if do_pack_lhs {
+                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                    } else {
+                                        lhs.wrapping_offset(
+                                            (row_outer + row_inner) as isize * lhs_rs
+                                                + depth_outer as isize * lhs_cs,
+                                        )
+                                        .0
+                                    },
+                                    if do_pack_rhs {
+                                        packed_rhs.wrapping_add(j * packed_rhs_stride).0
+                                    } else {
+                                        rhs.wrapping_offset(
+                                            depth_outer as isize * rhs_rs
+                                                + (col_outer + col_inner) as isize * rhs_cs,
+                                        )
+                                        .0
+                                    },
+                                    dst_cs,
+                                    dst_rs,
+                                    packed_lhs_cs,
+                                    packed_rhs_rs,
+                                    packed_rhs_cs,
+                                    alpha,
+                                    beta,
+                                    alpha_status,
+                                    conj_dst,
+                                    conj_lhs,
+                                    conj_rhs,
+                                    if do_pack_lhs {
+                                        packed_lhs.wrapping_add((i + 1) * packed_lhs_stride).0
+                                    } else {
+                                        lhs.wrapping_offset(
+                                            (row_outer + row_inner + m_chunk_inner) as isize
+                                                * lhs_rs
+                                                + depth_outer as isize * lhs_cs,
+                                        )
+                                        .0
+                                    },
+                                );
                                 i += 1;
                             }
+                            j += 1;
                         }
 
                         row_outer += m_chunk;
