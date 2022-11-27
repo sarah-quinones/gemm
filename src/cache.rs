@@ -220,7 +220,7 @@ pub fn kernel_params(
 
     let info = *CACHE_INFO;
 
-    let l1_cache_bytes = info[0].cache_bytes.max(1024);
+    let l1_cache_bytes = info[0].cache_bytes.max(32 * 1024);
     let l2_cache_bytes = info[1].cache_bytes;
     let l3_cache_bytes = info[2].cache_bytes;
 
@@ -254,7 +254,7 @@ pub fn kernel_params(
     let c_rhs = (nr * kc_0 * sizeof) / (l1_line_bytes * l1_n_sets);
     let kc_multiplier = l1_assoc / (c_lhs + c_rhs);
     // let auto_kc = kc_0 * kc_multiplier;
-    let auto_kc = kc_0 * kc_multiplier.next_power_of_two();
+    let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(256).min(k);
     let k_iter = div_ceil(k, auto_kc);
     let auto_kc = div_ceil(k, k_iter);
 
@@ -265,15 +265,15 @@ pub fn kernel_params(
     let auto_mc = if l2_cache_bytes == 0 {
         panic!();
     } else {
-        // let rhs_micropanel_bytes = nr * auto_kc * sizeof;
-        // let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
-        let lhs_l2_assoc = l2_assoc - 1;
+        let rhs_micropanel_bytes = nr * auto_kc * sizeof;
+        let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
+        let lhs_l2_assoc = (l2_assoc - 1 - rhs_l2_assoc).max(1);
 
         let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
         };
 
-        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc), mr);
+        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2 + 1), mr);
         let m_iter = div_ceil(m, auto_mc);
         div_ceil(m, m_iter * mr) * mr
     };
