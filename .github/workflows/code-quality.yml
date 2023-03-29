@@ -1,0 +1,30 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+name: Assess Code Quality
+
+jobs:
+  code-quality:
+    name: code-quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@master
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy, rustfmt, rust-src, miri
+
+      - name: Formatting check
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Linting check
+        run: cargo clippy --all-targets
+        continue-on-error: true
