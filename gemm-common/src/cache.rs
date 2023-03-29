@@ -201,7 +201,6 @@ fn round_down(a: usize, b: usize) -> usize {
     a / b * b
 }
 
-#[inline(always)]
 pub fn kernel_params(
     m: usize,
     n: usize,

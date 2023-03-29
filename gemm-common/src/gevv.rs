@@ -1,6 +1,5 @@
-use num_traits::{One, Zero};
-
 use crate::simd::Simd;
+use num_traits::{One, Zero};
 
 #[inline(always)]
 pub unsafe fn gevv<

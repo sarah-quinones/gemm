@@ -29,7 +29,7 @@ mod x86 {
 
     impl Simd for Sse {
         #[inline]
-        #[target_feature(enable = "sse")]
+        #[target_feature(enable = "sse,sse2")]
         unsafe fn vectorize(f: impl FnOnce()) {
             f()
         }

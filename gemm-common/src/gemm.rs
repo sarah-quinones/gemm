@@ -1,16 +1,21 @@
 use crate::{
     cache::{kernel_params, KernelParams, CACHE_INFO},
     gemv, gevv,
-    microkernel::{self, MicroKernelFn},
+    microkernel::MicroKernelFn,
     pack_operands::{pack_lhs, pack_rhs},
     simd::Simd,
     Parallelism, Ptr,
 };
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use core::{any::TypeId, cell::RefCell};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
 use num_traits::{One, Zero};
+
+#[allow(non_camel_case_types)]
+pub type c32 = num_complex::Complex32;
+#[allow(non_camel_case_types)]
+pub type c64 = num_complex::Complex64;
 
 // https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
 const CACHELINE_ALIGN: usize = {
@@ -56,7 +61,7 @@ thread_local! {
     ));
 }
 
-trait Conj: Copy {
+pub trait Conj: Copy {
     fn conj(self) -> Self;
 }
 
@@ -141,7 +146,7 @@ pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
 }
 
 #[inline(always)]
-unsafe fn gemm_basic_generic<
+pub unsafe fn gemm_basic_generic<
     S: Simd,
     T: Copy
         + Zero
@@ -340,7 +345,6 @@ unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
-                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(n_threads) => {
                     let threading_threshold = get_threading_threshold();
                     if m * n_chunk * k_chunk <= threading_threshold {
@@ -507,7 +511,6 @@ unsafe fn gemm_basic_generic<
 
             match parallelism {
                 Parallelism::None => func(0),
-                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(_) => {
                     if n_threads == 1 {
                         func(0);
@@ -527,11 +530,12 @@ unsafe fn gemm_basic_generic<
     }
 }
 
+#[macro_export]
 macro_rules! __inject_mod {
     ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
         mod $module {
             use super::*;
-            use microkernel::$module::$ty::*;
+            use crate::microkernel::$module::$ty::*;
             const N: usize = $N;
 
             #[inline(never)]
@@ -554,10 +558,10 @@ macro_rules! __inject_mod {
                 conj_dst: bool,
                 conj_lhs: bool,
                 conj_rhs: bool,
-                parallelism: Parallelism,
+                parallelism: $crate::Parallelism,
             ) {
-                gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
-                    crate::simd::$simd,
+                $crate::gemm::gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                    $crate::simd::$simd,
                     m,
                     n,
                     k,
@@ -585,12 +589,13 @@ macro_rules! __inject_mod {
     };
 }
 
+#[macro_export]
 macro_rules! __inject_mod_cplx {
     ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
         paste::paste! {
             mod [<$module _cplx>] {
                 use super::*;
-                use microkernel::$module::$ty::*;
+                use crate::microkernel::$module::$ty::*;
                 const N: usize = $N;
 
                 #[inline(never)]
@@ -613,10 +618,10 @@ macro_rules! __inject_mod_cplx {
                     conj_dst: bool,
                     conj_lhs: bool,
                     conj_rhs: bool,
-                    parallelism: Parallelism,
+                    parallelism: $crate::Parallelism,
                     ) {
-                    gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
-                        crate::simd::$simd,
+                    $crate::gemm::gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
+                        $crate::simd::$simd,
                         m,
                         n,
                         k,
@@ -645,11 +650,9 @@ macro_rules! __inject_mod_cplx {
     };
 }
 
+#[macro_export]
 macro_rules! gemm_def {
     ($ty: tt, $multiplier: expr) => {
-        use super::*;
-        type T = $ty;
-
         type GemmTy = unsafe fn(
             usize,
             usize,
@@ -669,8 +672,65 @@ macro_rules! gemm_def {
             bool,
             bool,
             bool,
-            Parallelism,
+            $crate::Parallelism,
         );
+
+        fn init_gemm_fn() -> GemmTy {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                #[cfg(feature = "nightly")]
+                if $crate::feature_detected!("avx512f") {
+                    return avx512f::gemm_basic;
+                }
+                if $crate::feature_detected!("fma") {
+                    fma::gemm_basic
+                } else if $crate::feature_detected!("avx") {
+                    avx::gemm_basic
+                } else if $crate::feature_detected!("sse") && $crate::feature_detected!("sse2") {
+                    sse::gemm_basic
+                } else {
+                    scalar::gemm_basic
+                }
+            }
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                if $crate::feature_detected!("neon") {
+                    neon::gemm_basic
+                } else {
+                    scalar::gemm_basic
+                }
+            }
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+            {
+                scalar::gemm_basic
+            }
+        }
+
+        lazy_static::lazy_static! {
+            pub static ref GEMM: GemmTy = init_gemm_fn();
+        }
+
+        $crate::__inject_mod!(scalar, $ty, 1, Scalar);
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        $crate::__inject_mod!(sse, $ty, 2 * $multiplier, Sse);
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        $crate::__inject_mod!(avx, $ty, 4 * $multiplier, Avx);
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        $crate::__inject_mod!(fma, $ty, 4 * $multiplier, Fma);
+        #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
+        $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
+
+        #[cfg(target_arch = "aarch64")]
+        $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+    };
+}
+
+#[macro_export]
+macro_rules! gemm_cplx_def {
+    ($ty: tt, $multiplier: expr) => {
         type GemmCplxTy = unsafe fn(
             usize,
             usize,
@@ -690,50 +750,17 @@ macro_rules! gemm_def {
             bool,
             bool,
             bool,
-            Parallelism,
+            $crate::Parallelism,
         );
-
-        fn init_gemm_fn() -> GemmTy {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            {
-                #[cfg(feature = "nightly")]
-                if feature_detected!("avx512f") {
-                    return avx512f::gemm_basic;
-                }
-                if feature_detected!("fma") {
-                    fma::gemm_basic
-                } else if feature_detected!("avx") {
-                    avx::gemm_basic
-                } else if feature_detected!("sse") {
-                    sse::gemm_basic
-                } else {
-                    scalar::gemm_basic
-                }
-            }
-
-            #[cfg(target_arch = "aarch64")]
-            {
-                if feature_detected!("neon") {
-                    neon::gemm_basic
-                } else {
-                    scalar::gemm_basic
-                }
-            }
-
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                scalar::gemm_basic
-            }
-        }
 
         fn init_gemm_cplx_fn() -> GemmCplxTy {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
                 #[cfg(feature = "nightly")]
-                if feature_detected!("avx512f") {
+                if $crate::feature_detected!("avx512f") {
                     return avx512f_cplx::gemm_basic_cplx;
                 }
-                if feature_detected!("fma") {
+                if $crate::feature_detected!("fma") {
                     return fma_cplx::gemm_basic_cplx;
                 }
             }
@@ -742,358 +769,14 @@ macro_rules! gemm_def {
         }
 
         lazy_static::lazy_static! {
-            pub static ref GEMM: GemmTy = init_gemm_fn();
-        }
-
-        lazy_static::lazy_static! {
             pub static ref GEMM_CPLX: GemmCplxTy = init_gemm_cplx_fn();
         }
 
-        __inject_mod!(scalar, $ty, 1, Scalar);
-        __inject_mod_cplx!(scalar, $ty, 1, Scalar);
+        $crate::__inject_mod_cplx!(scalar, $ty, 1, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        __inject_mod!(sse, $ty, 2 * $multiplier, Sse);
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        __inject_mod!(avx, $ty, 4 * $multiplier, Avx);
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        __inject_mod!(fma, $ty, 4 * $multiplier, Fma);
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        __inject_mod_cplx!(fma, $ty, 2 * $multiplier, Fma);
+        $crate::__inject_mod_cplx!(fma, $ty, 2 * $multiplier, Fma);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        __inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
-        #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        __inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, Avx512f);
-
-        #[cfg(target_arch = "aarch64")]
-        __inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+        $crate::__inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, Avx512f);
     };
-}
-
-mod f32 {
-    gemm_def!(f32, 2);
-}
-mod f64 {
-    gemm_def!(f64, 1);
-}
-
-#[allow(non_camel_case_types)]
-pub type c32 = num_complex::Complex32;
-#[allow(non_camel_case_types)]
-pub type c64 = num_complex::Complex64;
-
-unsafe fn gemm_dispatch<T: 'static>(
-    m: usize,
-    n: usize,
-    k: usize,
-    dst: *mut T,
-    dst_cs: isize,
-    dst_rs: isize,
-    read_dst: bool,
-    lhs: *const T,
-    lhs_cs: isize,
-    lhs_rs: isize,
-    rhs: *const T,
-    rhs_cs: isize,
-    rhs_rs: isize,
-    alpha: T,
-    beta: T,
-    conj_dst: bool,
-    conj_lhs: bool,
-    conj_rhs: bool,
-    parallelism: Parallelism,
-) {
-    if TypeId::of::<T>() == TypeId::of::<f64>() {
-        crate::gemm::f64::GEMM(
-            m,
-            n,
-            k,
-            dst as *mut f64,
-            dst_cs,
-            dst_rs,
-            read_dst,
-            lhs as *mut f64,
-            lhs_cs,
-            lhs_rs,
-            rhs as *mut f64,
-            rhs_cs,
-            rhs_rs,
-            *(&alpha as *const T as *const f64),
-            *(&beta as *const T as *const f64),
-            false,
-            false,
-            false,
-            parallelism,
-        )
-    } else if TypeId::of::<T>() == TypeId::of::<f32>() {
-        crate::gemm::f32::GEMM(
-            m,
-            n,
-            k,
-            dst as *mut f32,
-            dst_cs,
-            dst_rs,
-            read_dst,
-            lhs as *mut f32,
-            lhs_cs,
-            lhs_rs,
-            rhs as *mut f32,
-            rhs_cs,
-            rhs_rs,
-            *(&alpha as *const T as *const f32),
-            *(&beta as *const T as *const f32),
-            false,
-            false,
-            false,
-            parallelism,
-        )
-    } else if TypeId::of::<T>() == TypeId::of::<c64>() {
-        crate::gemm::f64::GEMM_CPLX(
-            m,
-            n,
-            k,
-            dst as *mut c64,
-            dst_cs,
-            dst_rs,
-            read_dst,
-            lhs as *mut c64,
-            lhs_cs,
-            lhs_rs,
-            rhs as *mut c64,
-            rhs_cs,
-            rhs_rs,
-            *(&alpha as *const T as *const c64),
-            *(&beta as *const T as *const c64),
-            conj_dst,
-            conj_lhs,
-            conj_rhs,
-            parallelism,
-        )
-    } else if TypeId::of::<T>() == TypeId::of::<c32>() {
-        crate::gemm::f32::GEMM_CPLX(
-            m,
-            n,
-            k,
-            dst as *mut c32,
-            dst_cs,
-            dst_rs,
-            read_dst,
-            lhs as *mut c32,
-            lhs_cs,
-            lhs_rs,
-            rhs as *mut c32,
-            rhs_cs,
-            rhs_rs,
-            *(&alpha as *const T as *const c32),
-            *(&beta as *const T as *const c32),
-            conj_dst,
-            conj_lhs,
-            conj_rhs,
-            parallelism,
-        )
-    } else {
-        panic!();
-    }
-}
-
-/// dst := alpha×dst + beta×lhs×rhs
-///
-/// # Panics
-///
-/// Panics if `T` is not `f32` or `f64`
-#[inline]
-pub unsafe fn gemm<T: 'static>(
-    m: usize,
-    n: usize,
-    k: usize,
-    mut dst: *mut T,
-    dst_cs: isize,
-    dst_rs: isize,
-    read_dst: bool,
-    lhs: *const T,
-    lhs_cs: isize,
-    lhs_rs: isize,
-    rhs: *const T,
-    rhs_cs: isize,
-    rhs_rs: isize,
-    alpha: T,
-    beta: T,
-    conj_dst: bool,
-    conj_lhs: bool,
-    conj_rhs: bool,
-    parallelism: Parallelism,
-) {
-    // we want to transpose if the destination is column-oriented, since the microkernel prefers
-    // column major matrices.
-    let do_transpose = dst_cs.abs() < dst_rs.abs();
-
-    let (
-        m,
-        n,
-        mut dst_cs,
-        mut dst_rs,
-        mut lhs,
-        lhs_cs,
-        mut lhs_rs,
-        mut rhs,
-        mut rhs_cs,
-        rhs_rs,
-        conj_lhs,
-        conj_rhs,
-    ) = if do_transpose {
-        (
-            n, m, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs, conj_rhs, conj_lhs,
-        )
-    } else {
-        (
-            m, n, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs, conj_lhs, conj_rhs,
-        )
-    };
-
-    if dst_rs < 0 && m > 0 {
-        dst = dst.wrapping_offset((m - 1) as isize * dst_rs);
-        dst_rs = -dst_rs;
-        lhs = lhs.wrapping_offset((m - 1) as isize * lhs_rs);
-        lhs_rs = -lhs_rs;
-    }
-
-    if dst_cs < 0 && n > 0 {
-        dst = dst.wrapping_offset((n - 1) as isize * dst_cs);
-        dst_cs = -dst_cs;
-        rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);
-        rhs_cs = -rhs_cs;
-    }
-
-    gemm_dispatch(
-        m,
-        n,
-        k,
-        dst,
-        dst_cs,
-        dst_rs,
-        read_dst,
-        lhs,
-        lhs_cs,
-        lhs_rs,
-        rhs,
-        rhs_cs,
-        rhs_rs,
-        alpha,
-        beta,
-        conj_dst,
-        conj_lhs,
-        conj_rhs,
-        parallelism,
-    )
-}
-
-#[inline(never)]
-#[cfg(test)]
-pub(crate) unsafe fn gemm_fallback<T>(
-    m: usize,
-    n: usize,
-    k: usize,
-    dst: *mut T,
-    dst_cs: isize,
-    dst_rs: isize,
-    read_dst: bool,
-    lhs: *const T,
-    lhs_cs: isize,
-    lhs_rs: isize,
-    rhs: *const T,
-    rhs_cs: isize,
-    rhs_rs: isize,
-    alpha: T,
-    beta: T,
-) where
-    T: Zero + Send + Sync,
-    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
-    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
-{
-    let dst = Ptr(dst);
-    let lhs = Ptr(lhs as *mut T);
-    let rhs = Ptr(rhs as *mut T);
-
-    (0..m).for_each(|row| {
-        (0..n).for_each(|col| {
-            let mut accum = <T as Zero>::zero();
-            for depth in 0..k {
-                let lhs = &*lhs
-                    .wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs)
-                    .0;
-
-                let rhs = &*rhs
-                    .wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs)
-                    .0;
-
-                accum = &accum + &(lhs * rhs);
-            }
-            accum = &accum * &beta;
-
-            let dst = dst
-                .wrapping_offset(row as isize * dst_rs + col as isize * dst_cs)
-                .0;
-            if read_dst {
-                accum = &accum + &(&alpha * &*dst);
-            }
-            *dst = accum
-        });
-    });
-    return;
-}
-
-#[inline(never)]
-#[cfg(test)]
-pub(crate) unsafe fn gemm_cplx_fallback<T>(
-    m: usize,
-    n: usize,
-    k: usize,
-    dst: *mut num_complex::Complex<T>,
-    dst_cs: isize,
-    dst_rs: isize,
-    read_dst: bool,
-    lhs: *const num_complex::Complex<T>,
-    lhs_cs: isize,
-    lhs_rs: isize,
-    rhs: *const num_complex::Complex<T>,
-    rhs_cs: isize,
-    rhs_rs: isize,
-    alpha: num_complex::Complex<T>,
-    beta: num_complex::Complex<T>,
-    conj_dst: bool,
-    conj_lhs: bool,
-    conj_rhs: bool,
-) where
-    T: Zero + Send + Sync + std::clone::Clone + num_traits::Num + core::ops::Neg<Output = T>,
-    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
-    for<'a> &'a T: core::ops::Sub<&'a T, Output = T>,
-    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
-{
-    (0..m).for_each(|row| {
-        (0..n).for_each(|col| {
-            let mut accum = num_complex::Complex::<T>::zero();
-            for depth in 0..k {
-                let lhs = &*lhs.wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs);
-                let rhs = &*rhs.wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs);
-
-                match (conj_lhs, conj_rhs) {
-                    (true, true) => accum = &accum + &(lhs.conj() * rhs.conj()),
-                    (true, false) => accum = &accum + &(lhs.conj() * rhs),
-                    (false, true) => accum = &accum + &(lhs * rhs.conj()),
-                    (false, false) => accum = &accum + &(lhs * rhs),
-                }
-            }
-            accum = &accum * &beta;
-
-            let dst = dst.wrapping_offset(row as isize * dst_rs + col as isize * dst_cs);
-            if read_dst {
-                match conj_dst {
-                    true => accum = &accum + &(&alpha * (*dst).conj()),
-                    false => accum = &accum + &(&alpha * &*dst),
-                }
-            }
-            *dst = accum
-        });
-    });
-    return;
 }

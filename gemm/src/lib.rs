@@ -1,66 +1,11 @@
 #![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
-#![allow(unused_macros)]
 
-#[cfg(not(feature = "std"))]
-macro_rules! feature_detected {
-    ($tt: tt) => {
-        cfg!(feature = $tt)
-    };
-}
-
-#[cfg(all(feature = "std", any(target_arch = "x86", target_arch = "x86_64")))]
-macro_rules! feature_detected {
-    ($tt: tt) => {
-        ::std::arch::is_x86_feature_detected!($tt)
-    };
-}
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-macro_rules! feature_detected {
-    ($tt: tt) => {
-        ::std::arch::is_aarch64_feature_detected!($tt)
-    };
-}
-
-mod cache;
 mod gemm;
-mod gemv;
-mod gevv;
-mod microkernel;
-mod pack_operands;
-mod simd;
 
 pub use crate::gemm::*;
-
-pub enum Parallelism {
-    None,
-    #[cfg(feature = "rayon")]
-    Rayon(usize),
-}
-
-pub(crate) struct Ptr<T>(*mut T);
-
-impl<T> Clone for Ptr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for Ptr<T> {}
-
-unsafe impl<T> Send for Ptr<T> {}
-unsafe impl<T> Sync for Ptr<T> {}
-
-impl<T> Ptr<T> {
-    #[inline(always)]
-    pub fn wrapping_offset(self, offset: isize) -> Self {
-        Ptr::<T>(self.0.wrapping_offset(offset))
-    }
-    #[inline(always)]
-    pub fn wrapping_add(self, offset: usize) -> Self {
-        Ptr::<T>(self.0.wrapping_add(offset))
-    }
-}
+pub use gemm_common::Parallelism;
 
 #[cfg(test)]
 mod tests {
@@ -71,10 +16,10 @@ mod tests {
     #[test]
     fn test_gemm() {
         let mut mnks = vec![];
+        mnks.push((64, 64, 4));
         mnks.push((0, 64, 4));
         mnks.push((64, 0, 4));
         mnks.push((0, 0, 4));
-        mnks.push((64, 64, 4));
         mnks.push((64, 64, 0));
         mnks.push((256, 256, 256));
         mnks.push((16, 1, 1));
