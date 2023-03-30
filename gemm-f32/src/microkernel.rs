@@ -113,15 +113,15 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(["sse"], x1x1, 1, 1);
-        microkernel!(["sse"], x1x2, 1, 2);
-        microkernel!(["sse"], x1x3, 1, 3);
-        microkernel!(["sse"], x1x4, 1, 4);
+        microkernel!(["sse,sse2"], x1x1, 1, 1);
+        microkernel!(["sse,sse2"], x1x2, 1, 2);
+        microkernel!(["sse,sse2"], x1x3, 1, 3);
+        microkernel!(["sse,sse2"], x1x4, 1, 4);
 
-        microkernel!(["sse"], x2x1, 2, 1);
-        microkernel!(["sse"], x2x2, 2, 2);
-        microkernel!(["sse"], x2x3, 2, 3);
-        microkernel!(["sse"], x2x4, 2, 4);
+        microkernel!(["sse,sse2"], x2x1, 2, 1);
+        microkernel!(["sse,sse2"], x2x2, 2, 2);
+        microkernel!(["sse,sse2"], x2x3, 2, 3);
+        microkernel!(["sse,sse2"], x2x4, 2, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],

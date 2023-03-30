@@ -28,7 +28,7 @@ gemm-c64 = { version = "0.14", path = "../gemm-c64" }
 [features]
 default = ["std"]
 std = []
-nightly = []
+nightly = ["gemm-common/nightly", "gemm-f32/nightly", "gemm-f64/nightly", "gemm-c32/nightly", "gemm-c64/nightly"]
 
 [dev-dependencies]
 criterion = "0.4"

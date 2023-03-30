@@ -24,4 +24,4 @@ gemm-common = { version = "0.14", path = "../gemm-common" }
 [features]
 default = ["std"]
 std = []
-nightly = []
+nightly = ["gemm-common/nightly"]
