@@ -1,28 +1,8 @@
 pub mod scalar {
     pub mod f32 {
-        use core::mem::MaybeUninit;
-
         type T = f32;
         const N: usize = 1;
         type Pack = [T; N];
-
-        #[inline(always)]
-        unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..1 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..1 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
@@ -44,15 +24,15 @@ pub mod scalar {
             add(mul(a, b), c)
         }
 
-        microkernel!(, x1x1, 1, 1);
-        microkernel!(, x1x2, 1, 2);
-        microkernel!(, x1x3, 1, 3);
-        microkernel!(, x1x4, 1, 4);
+        microkernel!(, 2, x1x1, 1, 1);
+        microkernel!(, 2, x1x2, 1, 2);
+        microkernel!(, 2, x1x3, 1, 3);
+        microkernel!(, 2, x1x4, 1, 4);
 
-        microkernel!(, x2x1, 2, 1);
-        microkernel!(, x2x2, 2, 2);
-        microkernel!(, x2x3, 2, 3);
-        microkernel!(, x2x4, 2, 4);
+        microkernel!(, 2, x2x1, 2, 1);
+        microkernel!(, 2, x2x2, 2, 2);
+        microkernel!(, 2, x2x3, 2, 3);
+        microkernel!(, 2, x2x4, 2, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
@@ -69,29 +49,10 @@ pub mod sse {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
-        use core::mem::MaybeUninit;
 
         type T = f32;
         const N: usize = 4;
         type Pack = [T; N];
-
-        #[inline(always)]
-        unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..4 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..4 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
@@ -113,15 +74,15 @@ pub mod sse {
             add(mul(a, b), c)
         }
 
-        microkernel!(["sse,sse2"], x1x1, 1, 1);
-        microkernel!(["sse,sse2"], x1x2, 1, 2);
-        microkernel!(["sse,sse2"], x1x3, 1, 3);
-        microkernel!(["sse,sse2"], x1x4, 1, 4);
+        microkernel!(["sse,sse2"], 2, x1x1, 1, 1);
+        microkernel!(["sse,sse2"], 2, x1x2, 1, 2);
+        microkernel!(["sse,sse2"], 2, x1x3, 1, 3);
+        microkernel!(["sse,sse2"], 2, x1x4, 1, 4);
 
-        microkernel!(["sse,sse2"], x2x1, 2, 1);
-        microkernel!(["sse,sse2"], x2x2, 2, 2);
-        microkernel!(["sse,sse2"], x2x3, 2, 3);
-        microkernel!(["sse,sse2"], x2x4, 2, 4);
+        microkernel!(["sse,sse2"], 2, x2x1, 2, 1);
+        microkernel!(["sse,sse2"], 2, x2x2, 2, 2);
+        microkernel!(["sse,sse2"], 2, x2x3, 2, 3);
+        microkernel!(["sse,sse2"], 2, x2x4, 2, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
@@ -138,29 +99,10 @@ pub mod avx {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
-        use core::mem::MaybeUninit;
 
         type T = f32;
         const N: usize = 8;
         type Pack = [T; N];
-
-        #[inline(always)]
-        unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..8 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..8 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
@@ -182,15 +124,15 @@ pub mod avx {
             add(mul(a, b), c)
         }
 
-        microkernel!(["avx"], x1x1, 1, 1);
-        microkernel!(["avx"], x1x2, 1, 2);
-        microkernel!(["avx"], x1x3, 1, 3);
-        microkernel!(["avx"], x1x4, 1, 4);
+        microkernel!(["avx"], 2, x1x1, 1, 1);
+        microkernel!(["avx"], 2, x1x2, 1, 2);
+        microkernel!(["avx"], 2, x1x3, 1, 3);
+        microkernel!(["avx"], 2, x1x4, 1, 4);
 
-        microkernel!(["avx"], x2x1, 2, 1);
-        microkernel!(["avx"], x2x2, 2, 2);
-        microkernel!(["avx"], x2x3, 2, 3);
-        microkernel!(["avx"], x2x4, 2, 4);
+        microkernel!(["avx"], 2, x2x1, 2, 1);
+        microkernel!(["avx"], 2, x2x2, 2, 2);
+        microkernel!(["avx"], 2, x2x3, 2, 3);
+        microkernel!(["avx"], 2, x2x4, 2, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
@@ -207,29 +149,10 @@ pub mod fma {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
-        use core::mem::MaybeUninit;
 
         type T = f32;
         const N: usize = 8;
         type Pack = [T; N];
-
-        #[inline(always)]
-        unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..8 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..8 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
@@ -251,20 +174,20 @@ pub mod fma {
             transmute(_mm256_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["fma"], x1x1, 1, 1);
-        microkernel!(["fma"], x1x2, 1, 2);
-        microkernel!(["fma"], x1x3, 1, 3);
-        microkernel!(["fma"], x1x4, 1, 4);
+        microkernel!(["fma"], 2, x1x1, 1, 1);
+        microkernel!(["fma"], 2, x1x2, 1, 2);
+        microkernel!(["fma"], 2, x1x3, 1, 3);
+        microkernel!(["fma"], 2, x1x4, 1, 4);
 
-        microkernel!(["fma"], x2x1, 2, 1);
-        microkernel!(["fma"], x2x2, 2, 2);
-        microkernel!(["fma"], x2x3, 2, 3);
-        microkernel!(["fma"], x2x4, 2, 4);
+        microkernel!(["fma"], 2, x2x1, 2, 1);
+        microkernel!(["fma"], 2, x2x2, 2, 2);
+        microkernel!(["fma"], 2, x2x3, 2, 3);
+        microkernel!(["fma"], 2, x2x4, 2, 4);
 
-        microkernel!(["fma"], x3x1, 3, 1);
-        microkernel!(["fma"], x3x2, 3, 2);
-        microkernel!(["fma"], x3x3, 3, 3);
-        microkernel!(["fma"], x3x4, 3, 4);
+        microkernel!(["fma"], 2, x3x1, 3, 1);
+        microkernel!(["fma"], 2, x3x2, 3, 2);
+        microkernel!(["fma"], 2, x3x3, 3, 3);
+        microkernel!(["fma"], 2, x3x4, 3, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
@@ -282,29 +205,10 @@ pub mod avx512f {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
-        use core::mem::MaybeUninit;
 
         type T = f32;
         const N: usize = 16;
         type Pack = [T; N];
-
-        #[inline(always)]
-        unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..16 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..16 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         unsafe fn splat(value: T) -> Pack {
@@ -326,32 +230,32 @@ pub mod avx512f {
             transmute(_mm512_fmadd_ps(transmute(a), transmute(b), transmute(c)))
         }
 
-        microkernel!(["avx512f"], x1x1, 1, 1);
-        microkernel!(["avx512f"], x1x2, 1, 2);
-        microkernel!(["avx512f"], x1x3, 1, 3);
-        microkernel!(["avx512f"], x1x4, 1, 4);
-        microkernel!(["avx512f"], x1x5, 1, 5);
-        microkernel!(["avx512f"], x1x6, 1, 6);
-        microkernel!(["avx512f"], x1x7, 1, 7);
-        microkernel!(["avx512f"], x1x8, 1, 8);
+        microkernel!(["avx512f"], 4, x1x1, 1, 1);
+        microkernel!(["avx512f"], 4, x1x2, 1, 2);
+        microkernel!(["avx512f"], 4, x1x3, 1, 3);
+        microkernel!(["avx512f"], 4, x1x4, 1, 4);
+        microkernel!(["avx512f"], 4, x1x5, 1, 5);
+        microkernel!(["avx512f"], 4, x1x6, 1, 6);
+        microkernel!(["avx512f"], 4, x1x7, 1, 7);
+        microkernel!(["avx512f"], 4, x1x8, 1, 8);
 
-        microkernel!(["avx512f"], x2x1, 2, 1);
-        microkernel!(["avx512f"], x2x2, 2, 2);
-        microkernel!(["avx512f"], x2x3, 2, 3);
-        microkernel!(["avx512f"], x2x4, 2, 4);
-        microkernel!(["avx512f"], x2x5, 2, 5);
-        microkernel!(["avx512f"], x2x6, 2, 6);
-        microkernel!(["avx512f"], x2x7, 2, 7);
-        microkernel!(["avx512f"], x2x8, 2, 8);
+        microkernel!(["avx512f"], 4, x2x1, 2, 1);
+        microkernel!(["avx512f"], 4, x2x2, 2, 2);
+        microkernel!(["avx512f"], 4, x2x3, 2, 3);
+        microkernel!(["avx512f"], 4, x2x4, 2, 4);
+        microkernel!(["avx512f"], 4, x2x5, 2, 5);
+        microkernel!(["avx512f"], 4, x2x6, 2, 6);
+        microkernel!(["avx512f"], 4, x2x7, 2, 7);
+        microkernel!(["avx512f"], 4, x2x8, 2, 8);
 
-        microkernel!(["avx512f"], x3x1, 3, 1);
-        microkernel!(["avx512f"], x3x2, 3, 2);
-        microkernel!(["avx512f"], x3x3, 3, 3);
-        microkernel!(["avx512f"], x3x4, 3, 4);
-        microkernel!(["avx512f"], x3x5, 3, 5);
-        microkernel!(["avx512f"], x3x6, 3, 6);
-        microkernel!(["avx512f"], x3x7, 3, 7);
-        microkernel!(["avx512f"], x3x8, 3, 8);
+        microkernel!(["avx512f"], 4, x3x1, 3, 1);
+        microkernel!(["avx512f"], 4, x3x2, 3, 2);
+        microkernel!(["avx512f"], 4, x3x3, 3, 3);
+        microkernel!(["avx512f"], 4, x3x4, 3, 4);
+        microkernel!(["avx512f"], 4, x3x5, 3, 5);
+        microkernel!(["avx512f"], 4, x3x6, 3, 6);
+        microkernel!(["avx512f"], 4, x3x7, 3, 7);
+        microkernel!(["avx512f"], 4, x3x8, 3, 8);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
@@ -364,29 +268,9 @@ pub mod avx512f {
 #[allow(dead_code)]
 mod v128_common {
     pub mod f32 {
-        use core::mem::MaybeUninit;
-
         pub type T = f32;
         pub const N: usize = 4;
         pub type Pack = [T; N];
-
-        #[inline(always)]
-        pub unsafe fn gather(base: *const T, stride: isize) -> Pack {
-            let mut p = MaybeUninit::<Pack>::uninit();
-            let ptr = p.as_mut_ptr() as *mut T;
-            seq_macro::seq!(ITER in 0..4 {
-                *ptr.add(ITER) = *base.offset(ITER * stride);
-            });
-            p.assume_init()
-        }
-
-        #[inline(always)]
-        pub unsafe fn scatter(base: *mut T, stride: isize, p: Pack) {
-            let ptr = p.as_ptr();
-            seq_macro::seq!(ITER in 0..4 {
-                *base.offset(ITER * stride) = *ptr.add(ITER);
-            });
-        }
 
         #[inline(always)]
         pub unsafe fn splat(value: T) -> Pack {
@@ -426,32 +310,32 @@ pub mod neon {
             ))
         }
 
-        microkernel!(["neon"], x1x1, 1, 1);
-        microkernel!(["neon"], x1x2, 1, 2);
-        microkernel!(["neon"], x1x3, 1, 3);
-        microkernel!(["neon"], x1x4, 1, 4, 1, 4);
-        microkernel!(["neon"], x1x5, 1, 5);
-        microkernel!(["neon"], x1x6, 1, 6);
-        microkernel!(["neon"], x1x7, 1, 7);
-        microkernel!(["neon"], x1x8, 1, 8, 2, 4);
+        microkernel!(["neon"], 2, x1x1, 1, 1);
+        microkernel!(["neon"], 2, x1x2, 1, 2);
+        microkernel!(["neon"], 2, x1x3, 1, 3);
+        microkernel!(["neon"], 2, x1x4, 1, 4, 1, 4);
+        microkernel!(["neon"], 2, x1x5, 1, 5);
+        microkernel!(["neon"], 2, x1x6, 1, 6);
+        microkernel!(["neon"], 2, x1x7, 1, 7);
+        microkernel!(["neon"], 2, x1x8, 1, 8, 2, 4);
 
-        microkernel!(["neon"], x2x1, 2, 1);
-        microkernel!(["neon"], x2x2, 2, 2);
-        microkernel!(["neon"], x2x3, 2, 3);
-        microkernel!(["neon"], x2x4, 2, 4, 1, 4);
-        microkernel!(["neon"], x2x5, 2, 5);
-        microkernel!(["neon"], x2x6, 2, 6);
-        microkernel!(["neon"], x2x7, 2, 7);
-        microkernel!(["neon"], x2x8, 2, 8, 2, 4);
+        microkernel!(["neon"], 2, x2x1, 2, 1);
+        microkernel!(["neon"], 2, x2x2, 2, 2);
+        microkernel!(["neon"], 2, x2x3, 2, 3);
+        microkernel!(["neon"], 2, x2x4, 2, 4, 1, 4);
+        microkernel!(["neon"], 2, x2x5, 2, 5);
+        microkernel!(["neon"], 2, x2x6, 2, 6);
+        microkernel!(["neon"], 2, x2x7, 2, 7);
+        microkernel!(["neon"], 2, x2x8, 2, 8, 2, 4);
 
-        microkernel!(["neon"], x3x1, 3, 1);
-        microkernel!(["neon"], x3x2, 3, 2);
-        microkernel!(["neon"], x3x3, 3, 3);
-        microkernel!(["neon"], x3x4, 3, 4, 1, 4);
-        microkernel!(["neon"], x3x5, 3, 5);
-        microkernel!(["neon"], x3x6, 3, 6);
-        microkernel!(["neon"], x3x7, 3, 7);
-        microkernel!(["neon"], x3x8, 3, 8, 2, 4);
+        microkernel!(["neon"], 2, x3x1, 3, 1);
+        microkernel!(["neon"], 2, x3x2, 3, 2);
+        microkernel!(["neon"], 2, x3x3, 3, 3);
+        microkernel!(["neon"], 2, x3x4, 3, 4, 1, 4);
+        microkernel!(["neon"], 2, x3x5, 3, 5);
+        microkernel!(["neon"], 2, x3x6, 3, 6);
+        microkernel!(["neon"], 2, x3x7, 3, 7);
+        microkernel!(["neon"], 2, x3x8, 3, 8, 2, 4);
 
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],

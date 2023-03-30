@@ -110,7 +110,7 @@ macro_rules! microkernel_cplx_fn_array {
 
 #[macro_export]
 macro_rules! microkernel {
-    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
+    ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
@@ -211,8 +211,8 @@ macro_rules! microkernel {
                 )?
             }
 
-            let k_unroll = k / 4;
-            let k_leftover = k % 4;
+            let k_unroll = k / $unroll;
+            let k_leftover = k % $unroll;
 
             loop {
                 $(
@@ -233,13 +233,13 @@ macro_rules! microkernel {
                                 rhs: &mut rhs as *mut _ as _,
                             };
 
-                            seq_macro::seq!(UNROLL_ITER in 0..4 {{
+                            seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
                                 iter.execute_neon(UNROLL_ITER);
                             }});
 
-                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
-                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_lhs = packed_lhs.wrapping_offset($unroll * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset($unroll * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset($unroll * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -293,13 +293,13 @@ macro_rules! microkernel {
                             rhs: &mut rhs as *mut _ as _,
                         };
 
-                        seq_macro::seq!(UNROLL_ITER in 0..4 {{
+                        seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
                             iter.execute(UNROLL_ITER);
                         }});
 
-                        packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                        packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
-                        next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
+                        packed_lhs = packed_lhs.wrapping_offset($unroll * lhs_cs);
+                        packed_rhs = packed_rhs.wrapping_offset($unroll * rhs_rs);
+                        next_lhs = next_lhs.wrapping_offset($unroll * lhs_cs);
 
                         depth -= 1;
                         if depth == 0 {
@@ -336,82 +336,37 @@ macro_rules! microkernel {
                 break;
             }
 
-            if m == $mr_div_n * N && n == $nr {
+            if m == $mr_div_n * N && n == $nr && dst_rs == 1  {
                 let alpha = splat(alpha);
                 let beta = splat(beta);
-                if dst_rs == 1 {
-
-                    if alpha_status == 2 {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(add(
-                                        mul(alpha, dst.read_unaligned()),
-                                        mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                        ));
-                            }});
-                        }});
-                    } else if alpha_status == 1 {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(mul_add(
-                                        beta,
-                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
-                                        dst.read_unaligned(),
-                                        ));
-                            }});
-                        }});
-                    } else {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
-                                dst.write_unaligned(mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)));
-                            }});
-                        }});
-                    }
-                } else {
-                    if alpha_status == 2 {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
-                                    add(
-                                        mul(alpha, gather(dst, dst_rs)),
-                                        mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                    ),
-                                );
-                            }});
-                        }});
-                    } else if alpha_status == 1 {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
-                                    mul_add(
-                                        beta,
-                                        *accum.offset(M_ITER + $mr_div_n * N_ITER),
-                                        gather(dst, dst_rs),
-                                    ),
-                                );
-                            }});
-                        }});
-                    } else {
-                        seq_macro::seq!(N_ITER in 0..$nr {{
-                            seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                                let dst = dst.offset(M_ITER * N as isize * dst_rs + N_ITER * dst_cs);
-                                scatter(
-                                    dst,
-                                    dst_rs,
+                if alpha_status == 2 {
+                    seq_macro::seq!(N_ITER in 0..$nr {{
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                            dst.write_unaligned(add(
+                                    mul(alpha, dst.read_unaligned()),
                                     mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
-                                );
-                            }});
+                                    ));
                         }});
-                    }
+                    }});
+                } else if alpha_status == 1 {
+                    seq_macro::seq!(N_ITER in 0..$nr {{
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                            dst.write_unaligned(mul_add(
+                                    beta,
+                                    *accum.offset(M_ITER + $mr_div_n * N_ITER),
+                                    dst.read_unaligned(),
+                                    ));
+                        }});
+                    }});
+                } else {
+                    seq_macro::seq!(N_ITER in 0..$nr {{
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
+                            dst.write_unaligned(mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)));
+                        }});
+                    }});
                 }
             } else {
                 let src = accum_storage; // write to stack
@@ -455,13 +410,14 @@ macro_rules! microkernel {
                     }
                 }
             }
+
         }
     };
 }
 
 #[macro_export]
 macro_rules! microkernel_cplx {
-    ($([$target: tt])?, $name: ident, $mr_div_n: tt, $nr: tt) => {
+    ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt) => {
         #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
@@ -546,8 +502,8 @@ macro_rules! microkernel_cplx {
                 }
             }
 
-            let k_unroll = k / 4;
-            let k_leftover = k % 4;
+            let k_unroll = k / $unroll;
+            let k_leftover = k % $unroll;
 
             loop {
                 if conj_rhs {
@@ -568,13 +524,13 @@ macro_rules! microkernel_cplx {
                                 rhs_im: &mut rhs_im as *mut _ as _,
                             };
 
-                            seq_macro::seq!(UNROLL_ITER in 0..4 {{
+                            seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
                                 iter.execute(UNROLL_ITER, true);
                             }});
 
-                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
-                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_lhs = packed_lhs.wrapping_offset($unroll * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset($unroll * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset($unroll * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {
@@ -629,13 +585,13 @@ macro_rules! microkernel_cplx {
                                 rhs_im: &mut rhs_im as *mut _ as _,
                             };
 
-                            seq_macro::seq!(UNROLL_ITER in 0..4 {{
+                            seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
                                 iter.execute(UNROLL_ITER, false);
                             }});
 
-                            packed_lhs = packed_lhs.wrapping_offset(4 * lhs_cs);
-                            packed_rhs = packed_rhs.wrapping_offset(4 * rhs_rs);
-                            next_lhs = next_lhs.wrapping_offset(4 * lhs_cs);
+                            packed_lhs = packed_lhs.wrapping_offset($unroll * lhs_cs);
+                            packed_rhs = packed_rhs.wrapping_offset($unroll * rhs_rs);
+                            next_lhs = next_lhs.wrapping_offset($unroll * lhs_cs);
 
                             depth -= 1;
                             if depth == 0 {

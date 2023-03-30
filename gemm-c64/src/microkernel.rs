@@ -52,15 +52,15 @@ pub mod scalar {
             }
         }
 
-        microkernel_cplx!(, x1x1, 1, 1);
-        microkernel_cplx!(, x1x2, 1, 2);
-        microkernel_cplx!(, x1x3, 1, 3);
-        microkernel_cplx!(, x1x4, 1, 4);
+        microkernel_cplx!(, 2, x1x1, 1, 1);
+        microkernel_cplx!(, 2, x1x2, 1, 2);
+        microkernel_cplx!(, 2, x1x3, 1, 3);
+        microkernel_cplx!(, 2, x1x4, 1, 4);
 
-        microkernel_cplx!(, x2x1, 2, 1);
-        microkernel_cplx!(, x2x2, 2, 2);
-        microkernel_cplx!(, x2x3, 2, 3);
-        microkernel_cplx!(, x2x4, 2, 4);
+        microkernel_cplx!(, 2, x2x1, 2, 1);
+        microkernel_cplx!(, 2, x2x2, 2, 2);
+        microkernel_cplx!(, 2, x2x3, 2, 3);
+        microkernel_cplx!(, 2, x2x4, 2, 4);
 
         microkernel_cplx_fn_array! {
             [x1x1, x1x2, x1x3, x1x4,],
@@ -137,17 +137,17 @@ pub mod fma {
             }
         }
 
-        microkernel_cplx!(["fma"], cplx_x1x1, 1, 1);
-        microkernel_cplx!(["fma"], cplx_x1x2, 1, 2);
-        microkernel_cplx!(["fma"], cplx_x1x3, 1, 3);
+        microkernel_cplx!(["fma"], 2, cplx_x1x1, 1, 1);
+        microkernel_cplx!(["fma"], 2, cplx_x1x2, 1, 2);
+        microkernel_cplx!(["fma"], 2, cplx_x1x3, 1, 3);
 
-        microkernel_cplx!(["fma"], cplx_x2x1, 2, 1);
-        microkernel_cplx!(["fma"], cplx_x2x2, 2, 2);
-        microkernel_cplx!(["fma"], cplx_x2x3, 2, 3);
+        microkernel_cplx!(["fma"], 2, cplx_x2x1, 2, 1);
+        microkernel_cplx!(["fma"], 2, cplx_x2x2, 2, 2);
+        microkernel_cplx!(["fma"], 2, cplx_x2x3, 2, 3);
 
-        microkernel_cplx!(["fma"], cplx_x3x1, 3, 1);
-        microkernel_cplx!(["fma"], cplx_x3x2, 3, 2);
-        microkernel_cplx!(["fma"], cplx_x3x3, 3, 3);
+        microkernel_cplx!(["fma"], 2, cplx_x3x1, 3, 1);
+        microkernel_cplx!(["fma"], 2, cplx_x3x2, 3, 2);
+        microkernel_cplx!(["fma"], 2, cplx_x3x3, 3, 3);
 
         microkernel_cplx_fn_array! {
             [cplx_x1x1, cplx_x1x2, cplx_x1x3,],
@@ -229,20 +229,20 @@ pub mod avx512f {
             }
         }
 
-        microkernel_cplx!(["avx512f"], cplx_x1x1, 1, 1);
-        microkernel_cplx!(["avx512f"], cplx_x1x2, 1, 2);
-        microkernel_cplx!(["avx512f"], cplx_x1x3, 1, 3);
-        microkernel_cplx!(["avx512f"], cplx_x1x4, 1, 4);
+        microkernel_cplx!(["avx512f"], 4, cplx_x1x1, 1, 1);
+        microkernel_cplx!(["avx512f"], 4, cplx_x1x2, 1, 2);
+        microkernel_cplx!(["avx512f"], 4, cplx_x1x3, 1, 3);
+        microkernel_cplx!(["avx512f"], 4, cplx_x1x4, 1, 4);
 
-        microkernel_cplx!(["avx512f"], cplx_x2x1, 2, 1);
-        microkernel_cplx!(["avx512f"], cplx_x2x2, 2, 2);
-        microkernel_cplx!(["avx512f"], cplx_x2x3, 2, 3);
-        microkernel_cplx!(["avx512f"], cplx_x2x4, 2, 4);
+        microkernel_cplx!(["avx512f"], 4, cplx_x2x1, 2, 1);
+        microkernel_cplx!(["avx512f"], 4, cplx_x2x2, 2, 2);
+        microkernel_cplx!(["avx512f"], 4, cplx_x2x3, 2, 3);
+        microkernel_cplx!(["avx512f"], 4, cplx_x2x4, 2, 4);
 
-        microkernel_cplx!(["avx512f"], cplx_x3x1, 3, 1);
-        microkernel_cplx!(["avx512f"], cplx_x3x2, 3, 2);
-        microkernel_cplx!(["avx512f"], cplx_x3x3, 3, 3);
-        microkernel_cplx!(["avx512f"], cplx_x3x4, 3, 4);
+        microkernel_cplx!(["avx512f"], 4, cplx_x3x1, 3, 1);
+        microkernel_cplx!(["avx512f"], 4, cplx_x3x2, 3, 2);
+        microkernel_cplx!(["avx512f"], 4, cplx_x3x3, 3, 3);
+        microkernel_cplx!(["avx512f"], 4, cplx_x3x4, 3, 4);
 
         microkernel_cplx_fn_array! {
             [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
