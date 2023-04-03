@@ -205,6 +205,19 @@ pub mod avx512f {
             ))
         }
 
+        #[target_feature(enable = "avx512f")]
+        #[inline]
+        unsafe fn subadd_pd(a: __m512d, b: __m512d, c: __m512d) -> __m512d {
+            _mm512_fmaddsub_pd(
+                a,
+                b,
+                transmute(_mm512_xor_si512(
+                    transmute(c),
+                    transmute(_mm512_set1_pd(-0.0)),
+                )),
+            )
+        }
+
         #[inline(always)]
         unsafe fn mul_add_cplx(
             a_re_im: Pack,
@@ -215,10 +228,10 @@ pub mod avx512f {
             conj_rhs: bool,
         ) -> Pack {
             if conj_rhs {
-                transmute(_mm512_fmsubadd_pd(
+                transmute(subadd_pd(
                     transmute(a_re_im),
                     transmute(b_re),
-                    _mm512_fmsubadd_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
+                    subadd_pd(transmute(a_im_re), transmute(b_im), transmute(c_re_im)),
                 ))
             } else {
                 transmute(_mm512_fmaddsub_pd(
