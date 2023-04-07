@@ -21,6 +21,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     push(63, 3, 10);
     push(63, 4, 10);
 
+    push(1024, 1, 1024);
+    push(1024, 2, 1024);
+    push(1024, 3, 1024);
+    push(1024, 4, 1024);
+
     for (m, n, k) in mnks.iter().copied() {
         let a_vec = vec![0.0_f64; m * k];
         let b_vec = vec![0.0_f64; k * n];

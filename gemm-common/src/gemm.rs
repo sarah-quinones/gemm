@@ -235,14 +235,14 @@ pub unsafe fn gemm_basic_generic<
             );
             return;
         }
-        if m <= 4 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
+        if m <= 1 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
             gemv::gemv(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
                 alpha, beta, mul_add,
             );
             return;
         }
-        if n <= 4 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
+        if n <= 1 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
             gemv::gemv(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
                 alpha, beta, mul_add,

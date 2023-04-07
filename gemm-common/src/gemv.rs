@@ -72,7 +72,7 @@ pub unsafe fn gemv<
                             let dst = dst
                                 .wrapping_offset(COL as isize * dst_cs)
                                 .wrapping_offset(row as isize * dst_rs);
-                            *dst =  mul_add(rhs~COL, lhs, *dst);
+                            *dst = mul_add(rhs~COL, lhs, *dst);
                         }
                     });
                 }
@@ -81,9 +81,6 @@ pub unsafe fn gemv<
     }
     match n {
         1 => do_work!(1),
-        2 => do_work!(2),
-        3 => do_work!(3),
-        4 => do_work!(4),
         _ => unreachable!(),
     }
 }
