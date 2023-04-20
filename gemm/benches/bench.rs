@@ -113,7 +113,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                     false,
                                     false,
                                     false,
-                                    gemm::Parallelism::None,
+                                    gemm::Parallelism::Rayon(0),
                                 )
                             })
                         },
@@ -164,7 +164,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                                     false,
                                     false,
                                     false,
-                                    gemm::Parallelism::None,
+                                    gemm::Parallelism::Rayon(0),
                                 )
                             })
                         },
