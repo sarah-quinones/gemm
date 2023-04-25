@@ -254,7 +254,6 @@ macro_rules! microkernel {
                                 packed_lhs,
                                 next_lhs,
                                 packed_rhs,
-                                packed_rhs,
                                 lhs_cs,
                                 rhs_rs,
                                 rhs_cs,
