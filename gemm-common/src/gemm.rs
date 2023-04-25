@@ -1,5 +1,5 @@
 use crate::{
-    cache::{kernel_params, KernelParams, CACHE_INFO},
+    cache::{div_ceil, kernel_params, KernelParams, CACHE_INFO},
     gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::{pack_lhs, pack_rhs},
@@ -252,6 +252,14 @@ pub unsafe fn gemm_basic_generic<
     }
 
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
+    let nc = if nc > 0 {
+        nc
+    } else {
+        match parallelism {
+            Parallelism::None => 128 * NR,
+            Parallelism::Rayon(_) => div_ceil(n, NR) * NR,
+        }
+    };
 
     let simd_align = CACHELINE_ALIGN;
 

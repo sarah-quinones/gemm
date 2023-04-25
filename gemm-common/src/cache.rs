@@ -187,7 +187,7 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 #[inline]
-fn div_ceil(a: usize, b: usize) -> usize {
+pub fn div_ceil(a: usize, b: usize) -> usize {
     let d = a / b;
     let r = a % b;
     if r > 0 && b > 0 {
@@ -281,7 +281,7 @@ pub fn kernel_params(
     //  - A macropanel: mc×kc: assume 1 assoc degree
     //  - B macropanel: nc×kc
     let auto_nc = if l3_cache_bytes == 0 {
-        128 * nr
+        0
     } else {
         // let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
         // let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
