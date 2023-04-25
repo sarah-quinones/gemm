@@ -98,7 +98,7 @@ impl Conj for c64 {
 }
 
 pub const DEFAULT_THREADING_THRESHOLD: usize = 48 * 48 * 256;
-pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 2;
+pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 32;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD: usize = 8;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD: usize = 16;
 
@@ -270,14 +270,13 @@ pub unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    // on aarch64-neon, we always pack beyond a certain size, since the microkernel can use the
-    // contiguity of the RHS with `vfmaq_laneq_[f32|f64]`
     #[cfg(target_arch = "aarch64")]
     let do_pack_rhs = m > get_rhs_packing_threshold() * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
-    let do_pack_rhs = m > get_rhs_packing_threshold() * MR && rhs_rs.abs() != 1;
+    let do_pack_rhs = (rhs_rs.unsigned_abs() != 1 && m > 2 * MR)
+        || (rhs_rs.unsigned_abs() == 1 && m > get_rhs_packing_threshold() * MR);
 
     let mut mem = if do_pack_rhs {
         Some(GlobalMemBuffer::new(StackReq::new_aligned::<T>(
