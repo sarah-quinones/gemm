@@ -98,7 +98,8 @@ impl Conj for c64 {
 }
 
 pub const DEFAULT_THREADING_THRESHOLD: usize = 48 * 48 * 256;
-pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 32;
+// FIXME: this should be 128
+pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 1;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD: usize = 8;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD: usize = 16;
 
@@ -143,6 +144,15 @@ pub fn get_lhs_packing_threshold_multi_thread() -> usize {
 #[inline]
 pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
     LHS_PACKING_THRESHOLD_MULTI_THREAD.store(value.min(256), Ordering::Relaxed);
+}
+
+fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
+    fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
+        use rayon::prelude::*;
+        (0..n_threads).into_par_iter().for_each(func);
+    }
+
+    inner(n_threads, &func)
 }
 
 #[inline(always)]
@@ -235,14 +245,14 @@ pub unsafe fn gemm_basic_generic<
             );
             return;
         }
-        if m <= 1 && rhs_cs.wrapping_abs() <= rhs_rs.wrapping_abs() {
+        if m <= 1 && rhs_cs.unsigned_abs() <= rhs_rs.unsigned_abs() {
             gemv::gemv(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
                 alpha, beta, mul_add,
             );
             return;
         }
-        if n <= 1 && lhs_rs.wrapping_abs() <= lhs_cs.wrapping_abs() {
+        if n <= 1 && lhs_rs.unsigned_abs() <= lhs_cs.unsigned_abs() {
             gemv::gemv(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
                 alpha, beta, mul_add,
@@ -321,35 +331,6 @@ pub unsafe fn gemm_basic_generic<
                 2
             };
 
-            if do_pack_rhs {
-                pack_rhs::<T, 1, NR, _>(
-                    simd,
-                    n_chunk,
-                    k_chunk,
-                    packed_rhs,
-                    rhs.wrapping_offset(
-                        depth_outer as isize * rhs_rs + col_outer as isize * rhs_cs,
-                    ),
-                    rhs_cs,
-                    rhs_rs,
-                    packed_rhs_stride,
-                );
-            }
-
-            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
-
-            let mut n_jobs = 0;
-            let mut row_outer = 0;
-            while row_outer != m {
-                let mut m_chunk = mc.min(m - row_outer);
-                if m_chunk > N {
-                    m_chunk = m_chunk / N * N;
-                }
-                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
-                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
-                row_outer += m_chunk;
-            }
-
             let n_threads = match parallelism {
                 Parallelism::None => 1,
                 Parallelism::Rayon(n_threads) => {
@@ -365,6 +346,76 @@ pub unsafe fn gemm_basic_generic<
                     }
                 }
             };
+
+            if do_pack_rhs {
+                if n_threads <= 1 {
+                    pack_rhs::<T, 1, NR, _>(
+                        simd,
+                        n_chunk,
+                        k_chunk,
+                        packed_rhs,
+                        rhs.wrapping_offset(
+                            depth_outer as isize * rhs_rs + col_outer as isize * rhs_cs,
+                        ),
+                        rhs_cs,
+                        rhs_rs,
+                        packed_rhs_stride,
+                    );
+                } else {
+                    let n_tasks = div_ceil(n_chunk, NR);
+                    let base = n_tasks / n_threads;
+                    let rem = n_tasks % n_threads;
+
+                    let tid_to_col_inner = |tid: usize| {
+                        if tid == n_threads {
+                            return n_chunk;
+                        }
+
+                        if tid < rem {
+                            NR * tid * (base + 1)
+                        } else {
+                            NR * (rem + tid * base)
+                        }
+                    };
+
+                    let func = |tid: usize| {
+                        let col_inner = tid_to_col_inner(tid);
+                        let ncols = tid_to_col_inner(tid + 1) - col_inner;
+                        let j = col_inner / NR;
+
+                        if ncols > 0 {
+                            pack_rhs::<T, 1, NR, _>(
+                                simd,
+                                ncols,
+                                k_chunk,
+                                packed_rhs.wrapping_add(j * packed_rhs_stride),
+                                rhs.wrapping_offset(
+                                    depth_outer as isize * rhs_rs
+                                        + (col_outer + col_inner) as isize * rhs_cs,
+                                ),
+                                rhs_cs,
+                                rhs_rs,
+                                packed_rhs_stride,
+                            );
+                        }
+                    };
+                    par_for_each(n_threads, func);
+                }
+            }
+
+            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
+
+            let mut n_jobs = 0;
+            let mut row_outer = 0;
+            while row_outer != m {
+                let mut m_chunk = mc.min(m - row_outer);
+                if m_chunk > N {
+                    m_chunk = m_chunk / N * N;
+                }
+                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
+                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
+                row_outer += m_chunk;
+            }
 
             // use a single thread for small workloads
 
@@ -522,8 +573,7 @@ pub unsafe fn gemm_basic_generic<
                     if n_threads == 1 {
                         func(0);
                     } else {
-                        use rayon::prelude::*;
-                        (0..n_threads).into_par_iter().for_each(func);
+                        par_for_each(n_threads, func);
                     }
                 }
             }

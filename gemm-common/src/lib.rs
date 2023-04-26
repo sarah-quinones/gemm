@@ -10,6 +10,7 @@ pub mod microkernel;
 pub mod pack_operands;
 pub mod simd;
 
+#[derive(Copy, Clone, Debug)]
 pub enum Parallelism {
     None,
     Rayon(usize),

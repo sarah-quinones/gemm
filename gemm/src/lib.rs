@@ -14,14 +14,15 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     #[test]
-    fn test_gemm() {
+    fn test_gemm_real() {
         let mut mnks = vec![];
+        mnks.push((256, 256, 256));
+        mnks.push((4096, 4096, 4));
         mnks.push((64, 64, 4));
         mnks.push((0, 64, 4));
         mnks.push((64, 0, 4));
         mnks.push((0, 0, 4));
         mnks.push((64, 64, 0));
-        mnks.push((256, 256, 256));
         mnks.push((16, 1, 1));
         mnks.push((16, 2, 1));
         mnks.push((16, 3, 1));
@@ -48,60 +49,59 @@ mod tests {
 
         for (m, n, k) in mnks {
             dbg!(m, n, k);
-            for alpha in [0.0, 1.0, 2.3] {
-                for beta in [0.0, 1.0, 2.3] {
-                    dbg!(alpha, beta);
-                    let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
-                    let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
-                    let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();
-                    let mut d_vec = c_vec.clone();
+            for parallelism in [Parallelism::None, Parallelism::Rayon(0)] {
+                for alpha in [0.0, 1.0, 2.3] {
+                    for beta in [0.0, 1.0, 2.3] {
+                        dbg!(alpha, beta, parallelism);
+                        let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
+                        let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
+                        let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();
+                        let mut d_vec = c_vec.clone();
 
-                    unsafe {
-                        gemm::gemm(
-                            m,
-                            n,
-                            k,
-                            c_vec.as_mut_ptr(),
-                            m as isize,
-                            1,
-                            true,
-                            a_vec.as_ptr(),
-                            m as isize,
-                            1,
-                            b_vec.as_ptr(),
-                            k as isize,
-                            1,
-                            alpha,
-                            beta,
-                            false,
-                            false,
-                            false,
-                            #[cfg(feature = "rayon")]
-                            Parallelism::Rayon(0),
-                            #[cfg(not(feature = "rayon"))]
-                            Parallelism::None,
-                        );
+                        unsafe {
+                            gemm::gemm(
+                                m,
+                                n,
+                                k,
+                                c_vec.as_mut_ptr(),
+                                m as isize,
+                                1,
+                                true,
+                                a_vec.as_ptr(),
+                                m as isize,
+                                1,
+                                b_vec.as_ptr(),
+                                k as isize,
+                                1,
+                                alpha,
+                                beta,
+                                false,
+                                false,
+                                false,
+                                parallelism,
+                            );
 
-                        gemm::gemm_fallback(
-                            m,
-                            n,
-                            k,
-                            d_vec.as_mut_ptr(),
-                            m as isize,
-                            1,
-                            true,
-                            a_vec.as_ptr(),
-                            m as isize,
-                            1,
-                            b_vec.as_ptr(),
-                            k as isize,
-                            1,
-                            alpha,
-                            beta,
-                        );
-                    }
-                    for (c, d) in c_vec.iter().zip(d_vec.iter()) {
-                        assert_approx_eq::assert_approx_eq!(c, d);
+                            gemm::gemm_fallback(
+                                m,
+                                n,
+                                k,
+                                d_vec.as_mut_ptr(),
+                                m as isize,
+                                1,
+                                true,
+                                a_vec.as_ptr(),
+                                m as isize,
+                                1,
+                                b_vec.as_ptr(),
+                                k as isize,
+                                1,
+                                alpha,
+                                beta,
+                            );
+                        }
+                        for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                            assert_approx_eq::assert_approx_eq!(c, d);
+                        }
                     }
                 }
             }
@@ -185,10 +185,7 @@ mod tests {
                                         conj_dst,
                                         conj_lhs,
                                         conj_rhs,
-                                        #[cfg(feature = "rayon")]
                                         Parallelism::Rayon(0),
-                                        #[cfg(not(feature = "rayon"))]
-                                        Parallelism::None,
                                     );
 
                                     gemm::gemm_cplx_fallback(
