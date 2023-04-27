@@ -253,7 +253,7 @@ pub fn kernel_params(
     let c_rhs = (nr * kc_0 * sizeof) / (l1_line_bytes * l1_n_sets);
     let kc_multiplier = l1_assoc / (c_lhs + c_rhs);
     // let auto_kc = kc_0 * kc_multiplier;
-    let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(256).min(k);
+    let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(512).min(k);
     let k_iter = div_ceil(k, auto_kc);
     let auto_kc = div_ceil(k, k_iter);
 
@@ -272,7 +272,7 @@ pub fn kernel_params(
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
         };
 
-        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc / 2 + 1), mr);
+        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc), mr);
         let m_iter = div_ceil(m, auto_mc);
         div_ceil(m, m_iter * mr) * mr
     };
