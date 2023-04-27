@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 
 #[derive(Default, Debug, Copy, Clone)]
 pub struct CacheInfo {
+    pub small_mc: bool,
     pub associativity: usize,
     pub cache_bytes: usize,
     pub cache_line_bytes: usize,
@@ -23,10 +24,12 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
         let vf = vf.as_str();
         if vf == "GenuineIntel" {
             if let Some(cparams) = cpuid.get_cache_parameters() {
+                // not sure why, intel cpus seem to prefer smaller mc
                 let mut info = [CacheInfo {
                     cache_bytes: 0,
                     associativity: 0,
                     cache_line_bytes: 64,
+                    small_mc: true,
                 }; 3];
 
                 for cache in cparams {
@@ -68,6 +71,7 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
                                     associativity: 0,
                                     cache_bytes: 0,
                                     cache_line_bytes: 64,
+                                    small_mc: false,
                                 }
                             }
                             FullyAssociative => cache_bytes / cache_line_bytes,
@@ -79,6 +83,7 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
                             associativity,
                             cache_bytes,
                             cache_line_bytes,
+                            small_mc: false,
                         }
                     };
                     return Some([
@@ -113,16 +118,19 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 32 * 1024, // 32KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 256 * 1024, // 256KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 2 * 1024 * 1024, // 2MiB
         cache_line_bytes: 64,
@@ -132,16 +140,19 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
 #[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
 static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 64 * 1024, // 64KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 512 * 1024, // 512KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 4 * 1024 * 1024, // 4MiB
         cache_line_bytes: 64,
@@ -156,16 +167,19 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
 )))]
 static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 16 * 1024, // 16KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 512 * 1024, // 512KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
+        small_mc: false,
         associativity: 8,
         cache_bytes: 1024 * 1024, // 1MiB
         cache_line_bytes: 64,
@@ -272,7 +286,14 @@ pub fn kernel_params(
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
         };
 
-        let auto_mc = round_down(mc_from_lhs_l2_assoc(lhs_l2_assoc), mr);
+        let auto_mc = round_down(
+            mc_from_lhs_l2_assoc(if info[1].small_mc {
+                lhs_l2_assoc / 2 + 1
+            } else {
+                lhs_l2_assoc
+            }),
+            mr,
+        );
         let m_iter = div_ceil(m, auto_mc);
         div_ceil(m, m_iter * mr) * mr
     };
