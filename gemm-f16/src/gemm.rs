@@ -766,7 +766,7 @@ pub mod f16 {
     mod avx512f {
         use super::*;
         use gemm_f32::microkernel::avx512f::f32::*;
-        const N: usize = 8;
+        const N: usize = 16;
 
         #[inline(never)]
         pub unsafe fn gemm_basic(
