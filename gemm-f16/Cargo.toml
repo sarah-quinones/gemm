@@ -19,8 +19,8 @@ num-complex = { workspace = true }
 rayon = { workspace = true }
 paste = { workspace = true }
 
-gemm-common = { version = "0.15.0", path = "../gemm-common" }
-gemm-f32 = { version = "0.15.0", path = "../gemm-f32" }
+gemm-common = { version = "0.15", path = "../gemm-common" }
+gemm-f32 = { version = "0.15", path = "../gemm-f32" }
 half = { version = "2.2", features = ["num-traits"] }
 
 [features]

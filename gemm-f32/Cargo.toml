@@ -19,7 +19,7 @@ num-complex = { workspace = true }
 rayon = { workspace = true }
 paste = { workspace = true }
 
-gemm-common = { version = "0.15.0", path = "../gemm-common" }
+gemm-common = { version = "0.15", path = "../gemm-common" }
 
 [features]
 default = ["std"]
