@@ -1,5 +1,5 @@
 [workspace]
-members = ["gemm", "gemm-common", "gemm-f32", "gemm-f64", "gemm-c32", "gemm-c64"]
+members = ["gemm", "gemm-common", "gemm-f16", "gemm-f32", "gemm-f64", "gemm-c32", "gemm-c64"]
 
 [workspace.dependencies]
 lazy_static = "1.4"

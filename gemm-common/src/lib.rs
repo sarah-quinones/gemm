@@ -16,7 +16,7 @@ pub enum Parallelism {
     Rayon(usize),
 }
 
-pub(crate) struct Ptr<T>(*mut T);
+pub struct Ptr<T>(pub *mut T);
 
 impl<T> Clone for Ptr<T> {
     fn clone(&self) -> Self {

@@ -1,7 +1,7 @@
 use crate::simd::Simd;
 
 #[inline(always)]
-fn quick_zero<T: Copy>(slice: &mut [T]) {
+pub fn quick_zero<T: Copy>(slice: &mut [T]) {
     let n = slice.len();
     match n {
         1 => unsafe { *(slice.as_mut_ptr() as *mut [T; 1]) = core::mem::zeroed() },
@@ -265,7 +265,7 @@ unsafe fn pack_generic<T: Copy, const N: usize, const DST_WIDTH: usize>(
 }
 
 #[inline(never)]
-pub(crate) unsafe fn pack_lhs<T: Copy, const N: usize, const MR: usize, S: Simd>(
+pub unsafe fn pack_lhs<T: Copy, const N: usize, const MR: usize, S: Simd>(
     _: S,
     m: usize,
     k: usize,
@@ -284,7 +284,7 @@ pub(crate) unsafe fn pack_lhs<T: Copy, const N: usize, const MR: usize, S: Simd>
 }
 
 #[inline(never)]
-pub(crate) unsafe fn pack_rhs<T: Copy, const N: usize, const NR: usize, S: Simd>(
+pub unsafe fn pack_rhs<T: Copy, const N: usize, const NR: usize, S: Simd>(
     _: S,
     n: usize,
     k: usize,

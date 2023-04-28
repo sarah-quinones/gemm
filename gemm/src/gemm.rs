@@ -5,6 +5,8 @@ use core::any::TypeId;
 pub type c32 = num_complex::Complex32;
 #[allow(non_camel_case_types)]
 pub type c64 = num_complex::Complex64;
+#[allow(non_camel_case_types)]
+pub type f16 = gemm_f16::f16;
 
 unsafe fn gemm_dispatch<T: 'static>(
     m: usize,
@@ -66,6 +68,28 @@ unsafe fn gemm_dispatch<T: 'static>(
             rhs_rs,
             *(&alpha as *const T as *const f32),
             *(&beta as *const T as *const f32),
+            false,
+            false,
+            false,
+            parallelism,
+        )
+    } else if TypeId::of::<T>() == TypeId::of::<f16>() {
+        gemm_f16::gemm::f16::GEMM(
+            m,
+            n,
+            k,
+            dst as *mut f16,
+            dst_cs,
+            dst_rs,
+            read_dst,
+            lhs as *mut f16,
+            lhs_cs,
+            lhs_rs,
+            rhs as *mut f16,
+            rhs_cs,
+            rhs_rs,
+            *(&alpha as *const T as *const f16),
+            *(&beta as *const T as *const f16),
             false,
             false,
             false,
@@ -211,8 +235,8 @@ pub unsafe fn gemm<T: 'static>(
 }
 
 #[inline(never)]
-#[cfg(test)]
-pub(crate) unsafe fn gemm_fallback<T>(
+#[doc(hidden)]
+pub unsafe fn gemm_fallback<T>(
     m: usize,
     n: usize,
     k: usize,

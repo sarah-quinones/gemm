@@ -18,7 +18,7 @@ pub type c32 = num_complex::Complex32;
 pub type c64 = num_complex::Complex64;
 
 // https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
-const CACHELINE_ALIGN: usize = {
+pub const CACHELINE_ALIGN: usize = {
     #[cfg(any(
         target_arch = "x86_64",
         target_arch = "aarch64",
@@ -56,7 +56,7 @@ const CACHELINE_ALIGN: usize = {
 };
 
 thread_local! {
-    static L2_SLAB: RefCell<GlobalMemBuffer> = RefCell::new(GlobalMemBuffer::new(
+    pub static L2_SLAB: RefCell<GlobalMemBuffer> = RefCell::new(GlobalMemBuffer::new(
         StackReq::new_aligned::<u8>(CACHE_INFO[1].cache_bytes, CACHELINE_ALIGN)
     ));
 }
@@ -145,7 +145,7 @@ pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
     LHS_PACKING_THRESHOLD_MULTI_THREAD.store(value.min(256), Ordering::Relaxed);
 }
 
-fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
+pub fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
     fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
         use rayon::prelude::*;
         (0..n_threads).into_par_iter().for_each(func);
