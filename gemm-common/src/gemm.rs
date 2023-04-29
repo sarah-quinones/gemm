@@ -260,7 +260,16 @@ pub unsafe fn gemm_basic_generic<
         }
     }
 
-    let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>());
+    let KernelParams { kc, mc, nc } = if m <= 64 && n <= 64 {
+        // skip expensive kernel_params call for small sizes
+        KernelParams {
+            kc: k.min(512),
+            mc: div_ceil(m, MR) * MR,
+            nc: div_ceil(n, NR) * NR,
+        }
+    } else {
+        kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>())
+    };
     let nc = if nc > 0 {
         nc
     } else {
