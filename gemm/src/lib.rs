@@ -126,6 +126,9 @@ mod tests {
     #[test]
     fn test_gemm_real() {
         let mut mnks = vec![];
+        // large m to trigger parallelized rhs packing with big number of threads and small n
+        mnks.push((2048, 255, 255));
+
         mnks.push((256, 256, 256));
         mnks.push((4096, 4096, 4));
         mnks.push((64, 64, 4));
@@ -159,7 +162,11 @@ mod tests {
 
         for (m, n, k) in mnks {
             dbg!(m, n, k);
-            for parallelism in [Parallelism::None, Parallelism::Rayon(0)] {
+            for parallelism in [
+                Parallelism::None,
+                Parallelism::Rayon(0),
+                Parallelism::Rayon(128),
+            ] {
                 for alpha in [0.0, 1.0, 2.3] {
                     for beta in [0.0, 1.0, 2.3] {
                         dbg!(alpha, beta, parallelism);

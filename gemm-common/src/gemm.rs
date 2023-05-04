@@ -379,11 +379,12 @@ pub unsafe fn gemm_basic_generic<
                             return n_chunk;
                         }
 
-                        if tid < rem {
+                        let col = if tid < rem {
                             NR * tid * (base + 1)
                         } else {
                             NR * (rem + tid * base)
-                        }
+                        };
+                        col.min(n_chunk)
                     };
 
                     let func = |tid: usize| {
