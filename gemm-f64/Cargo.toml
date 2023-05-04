@@ -1,6 +1,6 @@
 [package]
 name = "gemm-f64"
-version = "0.15.2"
+version = "0.15.3"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
