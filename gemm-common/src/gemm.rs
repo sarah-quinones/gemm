@@ -262,9 +262,13 @@ pub unsafe fn gemm_basic_generic<
 
     let KernelParams { kc, mc, nc } = if m <= 64 && n <= 64 {
         // skip expensive kernel_params call for small sizes
+        let kc = k.min(512);
+        let alloc = CACHE_INFO[1].cache_bytes / core::mem::size_of::<T>();
+        let mc = (alloc / kc) / MR * MR;
+
         KernelParams {
-            kc: k.min(512),
-            mc: div_ceil(m, MR) * MR,
+            kc,
+            mc,
             nc: div_ceil(n, NR) * NR,
         }
     } else {

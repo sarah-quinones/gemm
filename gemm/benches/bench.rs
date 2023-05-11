@@ -9,6 +9,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut push = |m, n, k| {
         mnks.push((m, n, k));
     };
+    push(64, 64, 64);
     push(8192, 8192, 8192);
     push(4096, 4096, 4096);
     push(1024, 1024, 1024);
