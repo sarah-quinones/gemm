@@ -10,28 +10,6 @@ use half::slice::HalfFloatSliceExt;
 type T = half::f16;
 
 #[inline(always)]
-unsafe fn _pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
-    mut dst: *mut f32,
-    mut src: *const T,
-    src_rs: isize,
-    src_cs: isize,
-    src_width: usize,
-    k: usize,
-) {
-    for _ in 0..k {
-        for j in 0..src_width {
-            *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
-        }
-        quick_zero(core::slice::from_raw_parts_mut(
-            dst.add(src_width),
-            DST_WIDTH - src_width,
-        ));
-        src = src.wrapping_offset(src_cs);
-        dst = dst.add(DST_WIDTH);
-    }
-}
-
-#[inline(always)]
 unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
     mut dst: *mut f32,
     mut src: *const T,
