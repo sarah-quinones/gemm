@@ -6,10 +6,11 @@ use gemm_common::{
     pack_operands::quick_zero,
     Parallelism, Ptr,
 };
+use half::slice::HalfFloatSliceExt;
 type T = half::f16;
 
 #[inline(always)]
-unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
+unsafe fn _pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
     mut dst: *mut f32,
     mut src: *const T,
     src_rs: isize,
@@ -27,6 +28,86 @@ unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
         ));
         src = src.wrapping_offset(src_cs);
         dst = dst.add(DST_WIDTH);
+    }
+}
+
+#[inline(always)]
+unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
+    mut dst: *mut f32,
+    mut src: *const T,
+    src_rs: isize,
+    src_cs: isize,
+    src_width: usize,
+    k: usize,
+) {
+    if src_width == DST_WIDTH {
+        if src_rs == 1 {
+            for _ in 0..k {
+                let val = (src as *const [T; DST_WIDTH]).read();
+                val.convert_to_f32_slice(core::slice::from_raw_parts_mut(dst, DST_WIDTH));
+
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        } else {
+            for _ in 0..k {
+                for j in 0..DST_WIDTH {
+                    *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        }
+    } else if src_width == N {
+        if src_rs == 1 {
+            for _ in 0..k {
+                let val = (src as *const [T; N]).read();
+                val.convert_to_f32_slice(core::slice::from_raw_parts_mut(dst, N));
+
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        } else {
+            for _ in 0..k {
+                for j in 0..N {
+                    *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        }
+    } else if src_width == 2 * N {
+        if src_rs == 1 {
+            for _ in 0..k {
+                let val0 = (src as *const [T; N]).read();
+                let val1 = (src.add(N) as *const [T; N]).read();
+                val0.convert_to_f32_slice(core::slice::from_raw_parts_mut(dst, N));
+                val1.convert_to_f32_slice(core::slice::from_raw_parts_mut(dst.add(N), N));
+
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        } else {
+            for _ in 0..k {
+                for j in 0..2 * N {
+                    *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+        }
+    } else {
+        for _ in 0..k {
+            for j in 0..src_width {
+                *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
+            }
+            quick_zero(core::slice::from_raw_parts_mut(
+                dst.add(src_width),
+                DST_WIDTH - src_width,
+            ));
+            src = src.wrapping_offset(src_cs);
+            dst = dst.add(DST_WIDTH);
+        }
     }
 }
 
