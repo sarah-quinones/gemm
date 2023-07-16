@@ -807,7 +807,7 @@ macro_rules! gemm_def {
         $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
 
         #[cfg(target_arch = "wasm32")]
-        $crate::__inject_mod!(simd128, $ty, 4 * $multiplier, Simd128);
+        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Simd128);
     };
 }
 
