@@ -772,7 +772,17 @@ macro_rules! gemm_def {
                 }
             }
 
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                simd128::gemm_basic
+            }
+
+            #[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+            {
+                scalar::gemm_basic
+            }
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
             {
                 scalar::gemm_basic
             }
@@ -795,6 +805,9 @@ macro_rules! gemm_def {
 
         #[cfg(target_arch = "aarch64")]
         $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+
+        #[cfg(target_arch = "wasm32")]
+        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Simd128);
     };
 }
 
