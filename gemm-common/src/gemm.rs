@@ -348,7 +348,7 @@ pub unsafe fn gemm_basic_generic<
                 Parallelism::Rayon(max_threads) => {
                     let threading_threshold = get_threading_threshold();
 
-                    let max_threads = if n_threads == 0 {
+                    let max_threads = if max_threads == 0 {
                         rayon::current_num_threads()
                     } else {
                         max_threads
