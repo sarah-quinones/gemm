@@ -97,7 +97,7 @@ impl Conj for c64 {
     }
 }
 
-pub const DEFAULT_THREADING_THRESHOLD: usize = 64 * 64 * 256;
+pub const DEFAULT_THREADING_THRESHOLD: usize = 48 * 48 * 256;
 pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 128;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD: usize = 8;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD: usize = 16;
