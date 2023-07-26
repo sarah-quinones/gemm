@@ -345,17 +345,27 @@ pub unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
-                Parallelism::Rayon(n_threads) => {
+                Parallelism::Rayon(max_threads) => {
                     let threading_threshold = get_threading_threshold();
-                    if m * n_chunk * k_chunk <= threading_threshold {
-                        1
+
+                    let max_threads = if max_threads == 0 {
+                        rayon::current_num_threads()
                     } else {
-                        if n_threads == 0 {
-                            rayon::current_num_threads()
-                        } else {
-                            n_threads
-                        }
-                    }
+                        max_threads
+                    };
+                    let total_work = m * n_chunk * k_chunk;
+                    let n_threads = if total_work > threading_threshold {
+                        std::cmp::max(
+                            1,
+                            std::cmp::min(
+                                max_threads,
+                                (total_work - threading_threshold + 1) / threading_threshold,
+                            ),
+                        )
+                    } else {
+                        1
+                    };
+                    n_threads
                 }
             };
 

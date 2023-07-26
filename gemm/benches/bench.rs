@@ -256,6 +256,110 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
 }
 
+pub fn criterion_benchmark_parallelism(c: &mut Criterion) {
+    let mnks = vec![(6, 768 * 3, 768)];
+    // let mut push = |m, n, k| {
+    //     mnks.push((m, n, k));
+    // };
+    // push(64, 64, 64);
+    // push(8192, 8192, 8192);
+    // push(4096, 4096, 4096);
+    // push(1024, 1024, 1024);
+    // push(896, 128, 128);
+    // push(512, 256, 256);
+    // push(448, 448, 128);
+    // push(256, 256, 256);
+    // push(256, 32, 256);
+    // push(52, 52, 256);
+    // push(48, 48, 256);
+    // push(63, 1, 10);
+    // push(63, 2, 10);
+    // push(63, 3, 10);
+    // push(63, 4, 10);
+
+    // push(1024, 1, 1024);
+    // push(1024, 2, 1024);
+    // push(1024, 3, 1024);
+    // push(1024, 4, 1024);
+    //
+    let n_cpus = num_cpus::get();
+
+    for (m, n, k) in mnks.iter().copied() {
+        let a_vec = vec![0.0_f32; m * k];
+        let b_vec = vec![0.0_f32; k * n];
+        let mut c_vec = vec![0.0_f32; m * n];
+
+        for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
+            for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
+                for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
+                    c.bench_function(
+                        &format!(
+                            "parallelism-{}-f32-{}{}{}-gemm-{}×{}×{}",
+                            n_cpus, dst_label, lhs_label, rhs_label, m, n, k
+                        ),
+                        |b| {
+                            b.iter(|| unsafe {
+                                gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    dst_cs as isize,
+                                    dst_rs as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    lhs_cs as isize,
+                                    lhs_rs as isize,
+                                    b_vec.as_ptr(),
+                                    rhs_cs as isize,
+                                    rhs_rs as isize,
+                                    0.0_f32,
+                                    0.0_f32,
+                                    false,
+                                    false,
+                                    false,
+                                    gemm::Parallelism::Rayon(n_cpus),
+                                )
+                            })
+                        },
+                    );
+                    c.bench_function(
+                        &format!(
+                            "parallelism-none-f32-{}{}{}-gemm-{}×{}×{}",
+                            dst_label, lhs_label, rhs_label, m, n, k
+                        ),
+                        |b| {
+                            b.iter(|| unsafe {
+                                gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    dst_cs as isize,
+                                    dst_rs as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    lhs_cs as isize,
+                                    lhs_rs as isize,
+                                    b_vec.as_ptr(),
+                                    rhs_cs as isize,
+                                    rhs_rs as isize,
+                                    0.0_f32,
+                                    0.0_f32,
+                                    false,
+                                    false,
+                                    false,
+                                    gemm::Parallelism::None,
+                                )
+                            })
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default()
@@ -264,4 +368,12 @@ criterion_group!(
         .sample_size(10);
     targets = criterion_benchmark
 );
-criterion_main!(benches);
+criterion_group!(
+    name = benches_parallelism;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(2))
+        .sample_size(10);
+    targets = criterion_benchmark_parallelism
+);
+criterion_main!(benches, benches_parallelism);
