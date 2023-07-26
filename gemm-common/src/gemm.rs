@@ -354,10 +354,17 @@ pub unsafe fn gemm_basic_generic<
                         max_threads
                     };
                     let total_work = m * n_chunk * k_chunk;
-                    let n_threads = if total_work > threading_threshold{
-                    std::cmp::max(1, std::cmp::min(max_threads, (total_work - threading_threshold + 1) / threading_threshold))
-                    }else{1}
-                    ;
+                    let n_threads = if total_work > threading_threshold {
+                        std::cmp::max(
+                            1,
+                            std::cmp::min(
+                                max_threads,
+                                (total_work - threading_threshold + 1) / threading_threshold,
+                            ),
+                        )
+                    } else {
+                        1
+                    };
                     n_threads
                 }
             };
