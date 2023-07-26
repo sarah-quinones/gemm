@@ -97,7 +97,7 @@ impl Conj for c64 {
     }
 }
 
-pub const DEFAULT_THREADING_THRESHOLD: usize = 64 * 64 * 256;
+pub const DEFAULT_THREADING_THRESHOLD: usize = 48 * 48 * 256;
 pub const DEFAULT_RHS_PACKING_THRESHOLD: usize = 128;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD: usize = 8;
 pub const DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD: usize = 16;
@@ -354,7 +354,10 @@ pub unsafe fn gemm_basic_generic<
                         max_threads
                     };
                     let total_work = m * n_chunk * k_chunk;
-                    let n_threads = std::cmp::max(1, std::cmp::min(max_threads, (total_work - threading_threshold + 1) / threading_threshold));
+                    let n_threads = if total_work > threading_threshold{
+                    std::cmp::max(1, std::cmp::min(max_threads, (total_work - threading_threshold + 1) / threading_threshold))
+                    }else{1}
+                    ;
                     n_threads
                 }
             };
