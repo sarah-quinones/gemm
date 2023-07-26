@@ -279,6 +279,53 @@ mod v128_common {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub mod simd128 {
+    pub mod f32 {
+        use core::arch::wasm32::*;
+        use core::mem::transmute;
+
+        type T = f32;
+        const N: usize = 4;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            transmute(f32x4_splat(value))
+        }
+
+        #[inline(always)]
+        unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(f32x4_mul(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(f32x4_add(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            add(mul(a, b), c)
+        }
+
+        microkernel!(["simd128"], 2, x1x1, 1, 1);
+        microkernel!(["simd128"], 2, x1x2, 1, 2);
+        microkernel!(["simd128"], 2, x1x3, 1, 3);
+        microkernel!(["simd128"], 2, x1x4, 1, 4);
+
+        microkernel!(["simd128"], 2, x2x1, 2, 1);
+        microkernel!(["simd128"], 2, x2x2, 2, 2);
+        microkernel!(["simd128"], 2, x2x3, 2, 3);
+        microkernel!(["simd128"], 2, x2x4, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4,],
+            [x2x1, x2x2, x2x3, x2x4,],
+        }
+    }
+}
+
 #[cfg(target_arch = "aarch64")]
 pub mod neon {
     pub mod f32 {
