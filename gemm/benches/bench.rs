@@ -357,9 +357,7 @@ pub fn criterion_benchmark_parallelism(c: &mut Criterion) {
                 }
             }
         }
-
     }
-
 }
 
 criterion_group!(
