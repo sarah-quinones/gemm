@@ -64,6 +64,24 @@ mod x86 {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub use x86::*;
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64 {
+    use super::*;
+
+    #[derive(Copy, Clone)]
+    pub struct Neon;
+
+    impl Simd for Neon {
+        #[inline]
+        #[target_feature(enable = "neon")]
+        unsafe fn vectorize(f: impl FnOnce()) {
+            f()
+        }
+    }
+}
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::*;
+
 #[cfg(target_arch = "wasm32")]
 mod wasm32 {
     use super::*;

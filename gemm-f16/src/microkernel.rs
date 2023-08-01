@@ -343,4 +343,137 @@ pub mod neon {
             [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
         }
     }
+
+    pub mod f16 {
+        use core::mem::transmute;
+        use core::{
+            arch::{
+                aarch64::uint16x8_t,
+                asm,
+            },
+        };
+
+        pub type T = half::f16;
+        pub const N: usize = 8;
+        pub type Pack = [T; N];
+
+        #[allow(non_camel_case_types)]
+        type float16x8_t = uint16x8_t;
+
+        /// Floating point multiplication
+        /// [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FMUL--vector-)
+        #[inline]
+        pub unsafe fn vmulq_f16(a: float16x8_t, b: float16x8_t) -> float16x8_t {
+            let result: float16x8_t;
+            asm!(
+                "fmul {0:v}.8h, {1:v}.8h, {2:v}.8h",
+                out(vreg) result,
+                in(vreg) a,
+                in(vreg) b,
+                options(pure, nomem, nostack, preserves_flags));
+            result
+        }
+
+        /// Floating point addition
+        /// [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FADD--vector-)
+        #[inline]
+        pub unsafe fn vaddq_f16(a: float16x8_t, b: float16x8_t) -> float16x8_t {
+            let result: float16x8_t;
+            asm!(
+                "fadd {0:v}.8h, {1:v}.8h, {2:v}.8h",
+                out(vreg) result,
+                in(vreg) a,
+                in(vreg) b,
+                options(pure, nomem, nostack, preserves_flags));
+            result
+        }
+
+        /// Fused multiply add [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FMLA--vector-)
+        #[inline]
+        pub unsafe fn vfmaq_f16(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t{
+            asm!(
+                "fmla {0:v}.8h, {1:v}.8h, {2:v}.8h",
+                inout(vreg) a,
+                in(vreg) b,
+                in(vreg) c,
+                options(nomem, nostack, preserves_flags));
+            a
+        }
+
+        pub unsafe fn vget_lane_f16<const LANE: i32>(a: float16x8_t) -> u16 {
+            let mut result: u16 = 0;
+            let a: *const u16 = transmute(&a as *const float16x8_t);
+            std::ptr::copy_nonoverlapping(a.add(LANE as usize), &mut result as *mut u16, 1 );
+            result
+        }
+
+        #[inline]
+        pub unsafe fn vfmaq_laneq_f16<const LANE: i32>(a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
+            let c = vget_lane_f16::<LANE>(c);
+            let result = core::mem::transmute([c, c, c, c, c, c, c, c]);
+            vfmaq_f16(a, b, result)
+        }
+
+        #[inline(always)]
+        pub unsafe fn splat(value: T) -> Pack {
+            [value, value, value, value, value, value, value, value]
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vmulq_f16(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vaddq_f16(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_f16(transmute(c), transmute(a), transmute(b)))
+        }
+
+        #[inline(always)]
+        pub unsafe fn mul_add_lane<const LANE: i32>(a: Pack, b: Pack, c: Pack) -> Pack {
+            transmute(vfmaq_laneq_f16::<LANE>(
+                transmute(c),
+                transmute(a),
+                transmute(b),
+            ))
+        }
+
+        microkernel_f16!(["neon"], 2, x1x1, 1, 1);
+        microkernel_f16!(["neon"], 2, x1x2, 1, 2);
+        microkernel_f16!(["neon"], 2, x1x3, 1, 3);
+        microkernel_f16!(["neon"], 2, x1x4, 1, 4, 1, 4);
+        microkernel_f16!(["neon"], 2, x1x5, 1, 5);
+        microkernel_f16!(["neon"], 2, x1x6, 1, 6);
+        microkernel_f16!(["neon"], 2, x1x7, 1, 7);
+        microkernel_f16!(["neon"], 2, x1x8, 1, 8, 2, 4);
+
+        microkernel_f16!(["neon"], 2, x2x1, 2, 1);
+        microkernel_f16!(["neon"], 2, x2x2, 2, 2);
+        microkernel_f16!(["neon"], 2, x2x3, 2, 3);
+        microkernel_f16!(["neon"], 2, x2x4, 2, 4, 1, 4);
+        microkernel_f16!(["neon"], 2, x2x5, 2, 5);
+        microkernel_f16!(["neon"], 2, x2x6, 2, 6);
+        microkernel_f16!(["neon"], 2, x2x7, 2, 7);
+        microkernel_f16!(["neon"], 2, x2x8, 2, 8, 2, 4);
+
+        microkernel_f16!(["neon"], 2, x3x1, 3, 1);
+        microkernel_f16!(["neon"], 2, x3x2, 3, 2);
+        microkernel_f16!(["neon"], 2, x3x3, 3, 3);
+        microkernel_f16!(["neon"], 2, x3x4, 3, 4, 1, 4);
+        microkernel_f16!(["neon"], 2, x3x5, 3, 5);
+        microkernel_f16!(["neon"], 2, x3x6, 3, 6);
+        microkernel_f16!(["neon"], 2, x3x7, 3, 7);
+        microkernel_f16!(["neon"], 2, x3x8, 3, 8, 2, 4);
+
+        microkernel_fn_array! {
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+        }
+    }
 }
