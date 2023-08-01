@@ -25,9 +25,7 @@ pub mod neon {
 
         #[inline(always)]
         pub unsafe fn mul_add(a: Pack, b: Pack, c: Pack) -> Pack {
-            let out = transmute(vfmaq_f16(transmute(c), transmute(a), transmute(b)));
-            std::hint::black_box(out)
-            // out
+            transmute(vfmaq_f16(transmute(c), transmute(a), transmute(b)))
         }
 
         #[inline(always)]
