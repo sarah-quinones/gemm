@@ -407,51 +407,51 @@ pub mod neon {
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[0]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             1 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[1]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             2 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[2]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             3 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[3]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             4 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[4]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             5 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[5]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             6 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[6]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
             7 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[7]",
                 inout(vreg) a,
                 in(vreg) b,
-                in(vreg) c,
+                in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            _ => todo!("Implement Lane {LANE}")
+            _ => unreachable!()
             }
             a
         }
