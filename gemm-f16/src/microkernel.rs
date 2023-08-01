@@ -400,18 +400,60 @@ pub mod neon {
             a
         }
 
-        pub unsafe fn vget_lane_f16<const LANE: i32>(a: float16x8_t) -> u16 {
-            let mut result: u16 = 0;
-            let a: *const u16 = transmute(&a as *const float16x8_t);
-            std::ptr::copy_nonoverlapping(a.add(LANE as usize), &mut result as *mut u16, 1 );
-            result
-        }
-
         #[inline]
-        pub unsafe fn vfmaq_laneq_f16<const LANE: i32>(a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
-            let c = vget_lane_f16::<LANE>(c);
-            let result = core::mem::transmute([c, c, c, c, c, c, c, c]);
-            vfmaq_f16(a, b, result)
+        pub unsafe fn vfmaq_laneq_f16<const LANE: i32>(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
+            match LANE{
+            0 => asm!(
+                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[0]",
+                inout(vreg) a,
+                in(vreg) b,
+                in(vreg) c,
+                options(nomem, nostack, preserves_flags)),
+            // 1 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[1]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 2 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[2]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 3 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[3]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 4 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[4]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 5 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[5]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 6 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[6]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            // 7 => asm!(
+            //     "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[7]",
+            //     inout(vreg) a,
+            //     in(vreg) b,
+            //     in(vreg) c,
+            //     options(nomem, nostack, preserves_flags)),
+            _ => todo!("Implement Lane {LANE}")
+            }
+            a
         }
 
         #[inline(always)]
