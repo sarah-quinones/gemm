@@ -345,17 +345,27 @@ pub unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
-                Parallelism::Rayon(n_threads) => {
+                Parallelism::Rayon(max_threads) => {
                     let threading_threshold = get_threading_threshold();
-                    if m * n_chunk * k_chunk <= threading_threshold {
-                        1
+
+                    let max_threads = if max_threads == 0 {
+                        rayon::current_num_threads()
                     } else {
-                        if n_threads == 0 {
-                            rayon::current_num_threads()
-                        } else {
-                            n_threads
-                        }
-                    }
+                        max_threads
+                    };
+                    let total_work = m * n_chunk * k_chunk;
+                    let n_threads = if total_work > threading_threshold {
+                        std::cmp::max(
+                            1,
+                            std::cmp::min(
+                                max_threads,
+                                (total_work - threading_threshold + 1) / threading_threshold,
+                            ),
+                        )
+                    } else {
+                        1
+                    };
+                    n_threads
                 }
             };
 
@@ -772,7 +782,17 @@ macro_rules! gemm_def {
                 }
             }
 
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                simd128::gemm_basic
+            }
+
+            #[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+            {
+                scalar::gemm_basic
+            }
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
             {
                 scalar::gemm_basic
             }
@@ -794,7 +814,10 @@ macro_rules! gemm_def {
         $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
 
         #[cfg(target_arch = "aarch64")]
-        $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+        $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Neon);
+
+        #[cfg(target_arch = "wasm32")]
+        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Simd128);
     };
 }
 
