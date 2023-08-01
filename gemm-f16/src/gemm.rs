@@ -979,9 +979,7 @@ pub unsafe fn gemm_basic_f16<
                                                     .wrapping_offset(j as isize * dst_cs)
                                                     .wrapping_offset(i as isize * dst_rs)
                                                     .0;
-                                                *dst = 
-                                                    alpha * (*dst) + tmp[j][i]
-                                                ;
+                                                *dst = alpha * (*dst) + tmp[j][i];
                                             }
                                         }
                                     }
@@ -1014,7 +1012,6 @@ pub unsafe fn gemm_basic_f16<
         col_outer += n_chunk;
     }
 }
-
 
 pub mod f16 {
     use super::gemm_basic_generic;
@@ -1062,7 +1059,6 @@ pub mod f16 {
                 scalar::gemm_basic
             }
         }
-
 
         #[cfg(target_arch = "aarch64")]
         {

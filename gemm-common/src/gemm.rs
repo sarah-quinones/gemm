@@ -792,7 +792,12 @@ macro_rules! gemm_def {
                 scalar::gemm_basic
             }
 
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32")))]
+            #[cfg(not(any(
+                target_arch = "x86",
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "wasm32"
+            )))]
             {
                 scalar::gemm_basic
             }

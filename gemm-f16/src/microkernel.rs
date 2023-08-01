@@ -345,13 +345,8 @@ pub mod neon {
     }
 
     pub mod f16 {
+        use core::arch::{aarch64::uint16x8_t, asm};
         use core::mem::transmute;
-        use core::{
-            arch::{
-                aarch64::uint16x8_t,
-                asm,
-            },
-        };
 
         pub type T = half::f16;
         pub const N: usize = 8;
@@ -390,7 +385,7 @@ pub mod neon {
 
         /// Fused multiply add [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FMLA--vector-)
         #[inline]
-        pub unsafe fn vfmaq_f16(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t{
+        pub unsafe fn vfmaq_f16(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
             asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.8h",
                 inout(vreg) a,
@@ -401,57 +396,61 @@ pub mod neon {
         }
 
         #[inline]
-        pub unsafe fn vfmaq_laneq_f16<const LANE: i32>(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
-            match LANE{
-            0 => asm!(
+        pub unsafe fn vfmaq_laneq_f16<const LANE: i32>(
+            mut a: float16x8_t,
+            b: float16x8_t,
+            c: float16x8_t,
+        ) -> float16x8_t {
+            match LANE {
+                0 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[0]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            1 => asm!(
+                1 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[1]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            2 => asm!(
+                2 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[2]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            3 => asm!(
+                3 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[3]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            4 => asm!(
+                4 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[4]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            5 => asm!(
+                5 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[5]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            6 => asm!(
+                6 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[6]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            7 => asm!(
+                7 => asm!(
                 "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[7]",
                 inout(vreg) a,
                 in(vreg) b,
                 in(vreg_low16) c,
                 options(nomem, nostack, preserves_flags)),
-            _ => unreachable!()
+                _ => unreachable!(),
             }
             a
         }
