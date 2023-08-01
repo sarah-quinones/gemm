@@ -89,6 +89,7 @@ unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
     }
 }
 
+// DIRECT copy of [`pack_generic_inner_loop`]  but adapted for pure f16 inner
 #[inline(always)]
 unsafe fn pack_generic_inner_loop_f16<const N: usize, const DST_WIDTH: usize>(
     mut dst: *mut T,
@@ -196,6 +197,7 @@ unsafe fn pack_generic<const N: usize, const DST_WIDTH: usize>(
     }
 }
 
+// DIRECT copy of [`pack_generic`]  but adapted for pure f16
 #[inline(always)]
 unsafe fn pack_generic_f16<const N: usize, const DST_WIDTH: usize>(
     m: usize,
@@ -251,6 +253,7 @@ pub unsafe fn pack_rhs<const N: usize, const NR: usize>(
     pack_generic::<N, NR>(n, k, dst, src, src_rs, src_cs, dst_stride);
 }
 
+// DIRECT copy of [`pack_lhs`]  but adapted for pure f16
 #[inline(never)]
 pub unsafe fn pack_lhs_f16<const N: usize, const MR: usize>(
     m: usize,
@@ -266,6 +269,7 @@ pub unsafe fn pack_lhs_f16<const N: usize, const MR: usize>(
     pack_generic_f16::<N, MR>(m, k, dst, src, src_cs, src_rs, dst_stride);
 }
 
+// DIRECT copy of [`pack_rhs`]  but adapted for pure f16
 #[inline(never)]
 pub unsafe fn pack_rhs_f16<const N: usize, const NR: usize>(
     n: usize,
@@ -645,6 +649,7 @@ pub unsafe fn gemm_basic_generic<
     }
 }
 
+// DIRECT copy of [`gemm_basic`]  but adapted for pure f16
 #[inline(always)]
 pub unsafe fn gemm_basic_f16<
     const N: usize,
