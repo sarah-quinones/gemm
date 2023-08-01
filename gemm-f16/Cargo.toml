@@ -21,7 +21,8 @@ paste = { workspace = true }
 
 gemm-common = { version = "0.15", path = "../gemm-common" }
 gemm-f32 = { version = "0.15", path = "../gemm-f32" }
-half = { version = "2.2", features = ["num-traits"] }
+# half = { version = "2.2", features = ["num-traits"] }
+half = { git = "https://github.com/Narsil/half-rs", branch="more_intrinsics", features = ["num-traits"] }
 
 [features]
 default = ["std"]
