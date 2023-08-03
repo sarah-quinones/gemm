@@ -145,13 +145,14 @@ pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
     LHS_PACKING_THRESHOLD_MULTI_THREAD.store(value.min(256), Ordering::Relaxed);
 }
 
+#[inline(always)]
 pub fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
-    fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
-        use rayon::prelude::*;
-        (0..n_threads).into_par_iter().for_each(func);
-    }
-
-    inner(n_threads, &func)
+    rayon::scope(|s| {
+        for thread_idx in 0..n_threads {
+            let func = &func;
+            s.spawn(move |_| func(thread_idx));
+        }
+    })
 }
 
 #[inline(always)]
