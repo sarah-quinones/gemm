@@ -80,7 +80,57 @@ pub unsafe fn gemv<
         }
     }
     match n {
-        1 => do_work!(1),
+        1 => {
+            assert!(dst_rs == 1);
+            assert!(rhs_rs == 1);
+            let lhs_cs = lhs_cs as usize;
+            let lhs_rs = lhs_rs as usize;
+            if lhs_rs == 1 {
+                for depth in 0..k {
+                    let rhs = beta * *rhs.add(depth);
+                    let lhs = lhs.add(depth * lhs_cs);
+                    for row in 0..m {
+                        let lhs = lhs.add(row);
+                        let dst = dst.add(row);
+                        *dst = mul_add(rhs, *lhs, *dst);
+                    }
+                }
+            } else if lhs_cs == 1 {
+                let k_round = k / 8 * 8;
+                let rhs = rhs as *const f32;
+                for row in 0..m {
+                    let lhs = lhs.add(row * lhs_rs) as *const f32;
+                    let dst = dst.add(row) as *mut f32;
+                    for depth in (0..k_round).step_by(8) {
+                        use std::arch::x86_64::*;
+                        let rhs = _mm256_loadu_ps(rhs.add(depth));
+                        let lhs = _mm256_loadu_ps(lhs.add(depth));
+                        let s = _mm256_mul_ps(lhs, rhs);
+                        let res = _mm256_extractf128_ps(s, 1);
+                        let res = _mm_add_ps(res, _mm256_castps256_ps128(s));
+                        let res = _mm_add_ps(res, _mm_movehl_ps(res, res));
+                        let res = _mm_add_ps(res, _mm_movehdup_ps(res));
+                        *dst = *dst + _mm_cvtss_f32(res)
+                    }
+                    for depth in k_round..k {
+                        // beta
+                        let rhs = rhs.add(depth);
+                        let lhs = lhs.add(depth);
+                        *dst = *dst + *rhs * *lhs;
+                    }
+                }
+            } else {
+                for depth in 0..k {
+                    let rhs = beta * *rhs.add(depth);
+                    let lhs = lhs.add(depth * lhs_cs);
+                    for row in 0..m {
+                        let lhs = lhs.add(row * lhs_rs);
+                        let dst = dst.add(row);
+                        *dst = mul_add(rhs, *lhs, *dst);
+                    }
+                }
+            }
+        }
         _ => unreachable!(),
     }
 }
