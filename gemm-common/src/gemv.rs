@@ -81,18 +81,32 @@ pub unsafe fn gemv<
     }
     match n {
         1 => {
+            use std::arch::x86_64::*;
             assert!(dst_rs == 1);
             assert!(rhs_rs == 1);
             let lhs_cs = lhs_cs as usize;
             let lhs_rs = lhs_rs as usize;
             if lhs_rs == 1 {
+                let m_round = m / 8 * 8;
+                let rhs = rhs as *const f32;
+                let lhs = lhs as *const f32;
+                let dst = dst as *mut f32;
                 for depth in 0..k {
-                    let rhs = beta * *rhs.add(depth);
+                    // TODO: beta
+                    let rhs = *rhs.add(depth);
+                    let rhs_ = _mm256_set1_ps(rhs);
                     let lhs = lhs.add(depth * lhs_cs);
-                    for row in 0..m {
+                    for row in (0..m_round).step_by(8) {
+                        let lhs = _mm256_loadu_ps(lhs.add(row));
+                        let dst = dst.add(row);
+                        let dst_ = _mm256_loadu_ps(dst);
+                        let dst_ = _mm256_fmadd_ps(rhs_, lhs, dst_);
+                        _mm256_storeu_ps(dst, dst_)
+                    }
+                    for row in m_round..m {
                         let lhs = lhs.add(row);
                         let dst = dst.add(row);
-                        *dst = mul_add(rhs, *lhs, *dst);
+                        *dst = rhs * *lhs + *dst;
                     }
                 }
             } else if lhs_cs == 1 {
@@ -102,7 +116,6 @@ pub unsafe fn gemv<
                     let lhs = lhs.add(row * lhs_rs) as *const f32;
                     let dst = dst.add(row) as *mut f32;
                     for depth in (0..k_round).step_by(8) {
-                        use std::arch::x86_64::*;
                         let rhs = _mm256_loadu_ps(rhs.add(depth));
                         let lhs = _mm256_loadu_ps(lhs.add(depth));
                         let s = _mm256_mul_ps(lhs, rhs);
