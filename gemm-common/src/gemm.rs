@@ -325,6 +325,9 @@ pub unsafe fn gemm_basic_generic<
     let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
 
+    let mut did_pack_lhs = vec![false; mc / MR];
+    let did_pack_lhs = Ptr((&mut *did_pack_lhs) as *mut _);
+
     let mut col_outer = 0;
     while col_outer != n {
         let n_chunk = nc.min(n - col_outer);
@@ -347,14 +350,17 @@ pub unsafe fn gemm_basic_generic<
                 Parallelism::None => 1,
                 Parallelism::Rayon(n_threads) => {
                     let threading_threshold = get_threading_threshold();
-                    if m * n_chunk * k_chunk <= threading_threshold {
+                    let total_work = (m * n_chunk).saturating_mul(k_chunk);
+                    if total_work < threading_threshold {
                         1
                     } else {
-                        if n_threads == 0 {
+                        let max_threads = if n_threads == 0 {
                             rayon::current_num_threads()
                         } else {
                             n_threads
-                        }
+                        };
+
+                        max_threads
                     }
                 }
             };
@@ -436,6 +442,12 @@ pub unsafe fn gemm_basic_generic<
                 L2_SLAB.with(|mem| {
                     let mut mem = mem.borrow_mut();
                     let stack = DynStack::new(&mut **mem);
+                    let mut did_pack_lhs_storage = vec![false; if tid > 0 { mc / MR } else { 0 }];
+                    let did_pack_lhs = if tid > 0 {
+                        &mut *did_pack_lhs_storage
+                    } else {
+                        &mut *({ did_pack_lhs }.0)
+                    };
 
                     let (mut packed_lhs_storage, _) =
                         stack.make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
@@ -484,22 +496,8 @@ pub unsafe fn gemm_basic_generic<
                             (m_chunk % N != 0) || lhs_rs != 1 || n_chunk > packing_threshold * NR;
                         let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
-                        if do_pack_lhs {
-                            pack_lhs::<T, N, MR, _>(
-                                simd,
-                                m_chunk,
-                                k_chunk,
-                                packed_lhs,
-                                lhs.wrapping_offset(
-                                    row_outer as isize * lhs_rs + depth_outer as isize * lhs_cs,
-                                ),
-                                lhs_cs,
-                                lhs_rs,
-                                packed_lhs_stride,
-                            );
-                        }
-
                         let mut j = 0;
+                        did_pack_lhs.fill(false);
                         while j < n_col_mini_chunks {
                             let mut i = 0;
                             while i < n_row_mini_chunks {
@@ -524,6 +522,23 @@ pub unsafe fn gemm_basic_generic<
 
                                 let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
                                     [n_chunk_inner - 1];
+
+                                if do_pack_lhs && !did_pack_lhs[i] {
+                                    pack_lhs::<T, N, MR, _>(
+                                        simd,
+                                        m_chunk_inner,
+                                        k_chunk,
+                                        packed_lhs.wrapping_add(i * packed_lhs_stride),
+                                        lhs.wrapping_offset(
+                                            (row_outer + row_inner) as isize * lhs_rs
+                                                + depth_outer as isize * lhs_cs,
+                                        ),
+                                        lhs_cs,
+                                        lhs_rs,
+                                        packed_lhs_stride,
+                                    );
+                                    did_pack_lhs[i] = true;
+                                }
 
                                 func(
                                     m_chunk_inner,

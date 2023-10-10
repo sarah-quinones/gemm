@@ -16,17 +16,18 @@ pub enum Parallelism {
     Rayon(usize),
 }
 
-pub struct Ptr<T>(pub *mut T);
+pub struct Ptr<T: ?Sized>(pub *mut T);
 
-impl<T> Clone for Ptr<T> {
+impl<T: ?Sized> Clone for Ptr<T> {
+    #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for Ptr<T> {}
+impl<T: ?Sized> Copy for Ptr<T> {}
 
-unsafe impl<T> Send for Ptr<T> {}
-unsafe impl<T> Sync for Ptr<T> {}
+unsafe impl<T: ?Sized> Send for Ptr<T> {}
+unsafe impl<T: ?Sized> Sync for Ptr<T> {}
 
 impl<T> Ptr<T> {
     #[inline(always)]
