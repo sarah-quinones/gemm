@@ -11,6 +11,7 @@ num-traits = "0.2"
 num-complex = "0.4"
 rayon = "1.7"
 paste = "1.0"
+half = { version = "2.3", features = ["num-traits", "bytemuck"] }
 
 [profile.dev]
 opt-level = 3
