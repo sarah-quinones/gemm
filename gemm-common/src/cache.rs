@@ -24,14 +24,14 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
             .ok()?
             .value_string()
             .ok()?
-            .parse()
+            .parse::<usize>()
             .unwrap()
             / 2;
         let l2: usize = Ctl::new("hw.l2dcachesize")
             .ok()?
             .value_string()
             .ok()?
-            .parse()
+            .parse::<usize>()
             .unwrap()
             / 2;
 
