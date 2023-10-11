@@ -25,32 +25,34 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
             .value_string()
             .ok()?
             .parse()
-            .unwrap();
+            .unwrap()
+            / 2;
         let l2: usize = Ctl::new("hw.l2dcachesize")
             .ok()?
             .value_string()
             .ok()?
             .parse()
-            .unwrap();
+            .unwrap()
+            / 2;
 
         Some([
             CacheInfo {
                 small_mc: false,
                 associativity: 8,
                 cache_bytes: l1,
-                cache_line_bytes: 64,
+                cache_line_bytes: 128,
             },
             CacheInfo {
                 small_mc: false,
                 associativity: 8,
                 cache_bytes: l2,
-                cache_line_bytes: 64,
+                cache_line_bytes: 128,
             },
             CacheInfo {
                 small_mc: false,
                 associativity: 8,
                 cache_bytes: 0,
-                cache_line_bytes: 64,
+                cache_line_bytes: 128,
             },
         ])
     }
