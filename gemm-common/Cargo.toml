@@ -18,8 +18,11 @@ num-traits = { workspace = true }
 num-complex = { workspace = true }
 rayon = { workspace = true }
 paste = { workspace = true }
+pulp = { version = "0.15.0", default-features = false }
+bytemuck = "1.14.0"
+half = { workspace = true }
 
 [features]
 default = ["std"]
-std = []
-nightly = []
+std = ["pulp/std"]
+nightly = ["pulp/nightly"]
