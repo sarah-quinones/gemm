@@ -15,102 +15,152 @@ pub struct KernelParams {
     pub nc: usize,
 }
 
-#[cfg(all(not(miri), any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(target_arch = "aarch64")]
 fn cache_info() -> Option<[CacheInfo; 3]> {
-    use raw_cpuid::CpuId;
-    let cpuid = CpuId::new();
+    #[cfg(not(miri))]
+    {
+        use sysctl::{Ctl, Sysctl};
+        let l1: usize = Ctl::new("hw.l1dcachesize")
+            .ok()?
+            .value_string()
+            .ok()?
+            .parse()
+            .unwrap();
+        let l2: usize = Ctl::new("hw.l2dcachesize")
+            .ok()?
+            .value_string()
+            .ok()?
+            .parse()
+            .unwrap();
 
-    if let Some(vf) = cpuid.get_vendor_info() {
-        let vf = vf.as_str();
-        if vf == "GenuineIntel" {
-            if let Some(cparams) = cpuid.get_cache_parameters() {
-                // not sure why, intel cpus seem to prefer smaller mc
-                let mut info = [CacheInfo {
-                    cache_bytes: 0,
-                    associativity: 0,
-                    cache_line_bytes: 64,
-                    small_mc: true,
-                }; 3];
-
-                for cache in cparams {
-                    use raw_cpuid::CacheType::*;
-                    match cache.cache_type() {
-                        Null | Instruction | Reserved => continue,
-                        Data | Unified => {
-                            let level = cache.level() as usize;
-                            let associativity = cache.associativity();
-                            let nsets = cache.sets();
-                            let cache_line_bytes = cache.coherency_line_size();
-                            if level > 0 && level < 4 {
-                                let info = &mut info[level - 1];
-                                info.cache_line_bytes = cache_line_bytes;
-                                info.associativity = associativity;
-                                info.cache_bytes = associativity * nsets * cache_line_bytes;
-                            }
-                        }
-                    }
-                }
-                return Some(info);
-            }
-        }
-
-        if vf == "AuthenticAMD" {
-            if let Some(l1) = cpuid.get_l1_cache_and_tlb_info() {
-                if let Some(l23) = cpuid.get_l2_l3_cache_and_tlb_info() {
-                    let compute_info = |associativity: raw_cpuid::Associativity,
-                                        cache_kb: usize,
-                                        cache_line_bytes: u8|
-                     -> CacheInfo {
-                        let cache_bytes = cache_kb as usize * 1024;
-                        let cache_line_bytes = cache_line_bytes as usize;
-
-                        use raw_cpuid::Associativity::*;
-                        let associativity = match associativity {
-                            Unknown | Disabled => {
-                                return CacheInfo {
-                                    associativity: 0,
-                                    cache_bytes: 0,
-                                    cache_line_bytes: 64,
-                                    small_mc: false,
-                                }
-                            }
-                            FullyAssociative => cache_bytes / cache_line_bytes,
-                            DirectMapped => 1,
-                            NWay(n) => n as usize,
-                        };
-
-                        CacheInfo {
-                            associativity,
-                            cache_bytes,
-                            cache_line_bytes,
-                            small_mc: false,
-                        }
-                    };
-                    return Some([
-                        compute_info(
-                            l1.dcache_associativity(),
-                            l1.dcache_size() as usize,
-                            l1.dcache_line_size(),
-                        ),
-                        compute_info(
-                            l23.l2cache_associativity(),
-                            l23.l2cache_size() as usize,
-                            l23.l2cache_line_size(),
-                        ),
-                        compute_info(
-                            l23.l3cache_associativity(),
-                            l23.l3cache_size() as usize * 512,
-                            l23.l3cache_line_size(),
-                        ),
-                    ]);
-                }
-            }
-        }
+        Some([
+            CacheInfo {
+                small_mc: false,
+                associativity: 8,
+                cache_bytes: l1,
+                cache_line_bytes: 64,
+            },
+            CacheInfo {
+                small_mc: false,
+                associativity: 8,
+                cache_bytes: l2,
+                cache_line_bytes: 64,
+            },
+            CacheInfo {
+                small_mc: false,
+                associativity: 8,
+                cache_bytes: 0,
+                cache_line_bytes: 64,
+            },
+        ])
     }
+
+    #[cfg(miri)]
     None
 }
 
-#[cfg(not(all(not(miri), any(target_arch = "x86", target_arch = "x86_64"))))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn cache_info() -> Option<[CacheInfo; 3]> {
+    #[cfg(not(miri))]
+    {
+        use raw_cpuid::CpuId;
+        let cpuid = CpuId::new();
+
+        if let Some(vf) = cpuid.get_vendor_info() {
+            let vf = vf.as_str();
+            if vf == "GenuineIntel" {
+                if let Some(cparams) = cpuid.get_cache_parameters() {
+                    // not sure why, intel cpus seem to prefer smaller mc
+                    let mut info = [CacheInfo {
+                        cache_bytes: 0,
+                        associativity: 0,
+                        cache_line_bytes: 64,
+                        small_mc: true,
+                    }; 3];
+
+                    for cache in cparams {
+                        use raw_cpuid::CacheType::*;
+                        match cache.cache_type() {
+                            Null | Instruction | Reserved => continue,
+                            Data | Unified => {
+                                let level = cache.level() as usize;
+                                let associativity = cache.associativity();
+                                let nsets = cache.sets();
+                                let cache_line_bytes = cache.coherency_line_size();
+                                if level > 0 && level < 4 {
+                                    let info = &mut info[level - 1];
+                                    info.cache_line_bytes = cache_line_bytes;
+                                    info.associativity = associativity;
+                                    info.cache_bytes = associativity * nsets * cache_line_bytes;
+                                }
+                            }
+                        }
+                    }
+                    return Some(info);
+                }
+            }
+
+            if vf == "AuthenticAMD" {
+                if let Some(l1) = cpuid.get_l1_cache_and_tlb_info() {
+                    if let Some(l23) = cpuid.get_l2_l3_cache_and_tlb_info() {
+                        let compute_info = |associativity: raw_cpuid::Associativity,
+                                            cache_kb: usize,
+                                            cache_line_bytes: u8|
+                         -> CacheInfo {
+                            let cache_bytes = cache_kb as usize * 1024;
+                            let cache_line_bytes = cache_line_bytes as usize;
+
+                            use raw_cpuid::Associativity::*;
+                            let associativity = match associativity {
+                                Unknown | Disabled => {
+                                    return CacheInfo {
+                                        associativity: 0,
+                                        cache_bytes: 0,
+                                        cache_line_bytes: 64,
+                                        small_mc: false,
+                                    }
+                                }
+                                FullyAssociative => cache_bytes / cache_line_bytes,
+                                DirectMapped => 1,
+                                NWay(n) => n as usize,
+                            };
+
+                            CacheInfo {
+                                associativity,
+                                cache_bytes,
+                                cache_line_bytes,
+                                small_mc: false,
+                            }
+                        };
+                        return Some([
+                            compute_info(
+                                l1.dcache_associativity(),
+                                l1.dcache_size() as usize,
+                                l1.dcache_line_size(),
+                            ),
+                            compute_info(
+                                l23.l2cache_associativity(),
+                                l23.l2cache_size() as usize,
+                                l23.l2cache_line_size(),
+                            ),
+                            compute_info(
+                                l23.l3cache_associativity(),
+                                l23.l3cache_size() as usize * 512,
+                                l23.l3cache_line_size(),
+                            ),
+                        ]);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(miri)]
+    None
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
 fn cache_info() -> Option<[CacheInfo; 3]> {
     None
 }

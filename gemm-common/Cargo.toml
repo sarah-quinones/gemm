@@ -18,6 +18,7 @@ num-traits = { workspace = true }
 num-complex = { workspace = true }
 rayon = { workspace = true }
 paste = { workspace = true }
+sysctl = "0.5.4"
 
 [features]
 default = ["std"]
