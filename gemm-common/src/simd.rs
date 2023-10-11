@@ -63,3 +63,21 @@ mod x86 {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub use x86::*;
+
+#[cfg(target_arch = "wasm32")]
+mod wasm32 {
+    use super::*;
+
+    #[derive(Copy, Clone)]
+    pub struct Simd128;
+
+    impl Simd for Simd128 {
+        #[inline]
+        #[target_feature(enable = "simd128")]
+        unsafe fn vectorize(f: impl FnOnce()) {
+            f()
+        }
+    }
+}
+#[cfg(target_arch = "wasm32")]
+pub use wasm32::*;
