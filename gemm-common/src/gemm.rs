@@ -325,29 +325,50 @@ pub unsafe fn gemm_basic_generic<
     #[cfg(not(target_arch = "aarch64"))]
     let do_pack_rhs = (rhs_rs.unsigned_abs() != 1 && m > 2 * MR)
         || (rhs_rs.unsigned_abs() == 1 && m > get_rhs_packing_threshold() * MR);
-    let do_prepack_lhs = m < mc && ((m % N != 0) || lhs_rs != 1);
+    let do_prepack_lhs = m <= 2 * mc && ((m % N != 0) || lhs_rs != 1);
 
     let mut mem = if do_pack_rhs || do_prepack_lhs {
-        let rhs_req = StackReq::new_aligned::<T>(packed_rhs_stride * (nc / NR), simd_align);
-        let lhs_req = StackReq::new_aligned::<T>(
-            packed_lhs_stride * (Ord::min(m, mc).next_multiple_of(MR) / MR),
+        let rhs_req = StackReq::new_aligned::<T>(
+            if do_pack_rhs {
+                packed_rhs_stride * (nc / NR)
+            } else {
+                0
+            },
             simd_align,
         );
-        Some(GlobalMemBuffer::new(lhs_req.and(rhs_req)))
+        let lhs_req = StackReq::new_aligned::<T>(
+            if do_prepack_lhs {
+                packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+            } else {
+                0
+            },
+            simd_align,
+        );
+        Some(GlobalMemBuffer::new(rhs_req.and(lhs_req)))
     } else {
         None
     };
 
     let mut packed_storage = mem.as_mut().map(|mem| {
         let stack = DynStack::new(mem);
-        let (rhs, stack) =
-            stack.make_aligned_uninit::<T>(packed_rhs_stride * (nc / NR), simd_align);
+        let (rhs, stack) = stack.make_aligned_uninit::<T>(
+            if do_pack_rhs {
+                packed_rhs_stride * (nc / NR)
+            } else {
+                0
+            },
+            simd_align,
+        );
 
         (
             rhs,
             stack
                 .make_aligned_uninit::<T>(
-                    packed_lhs_stride * (Ord::min(m, mc).next_multiple_of(MR) / MR),
+                    if do_prepack_lhs {
+                        packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+                    } else {
+                        0
+                    },
                     simd_align,
                 )
                 .0,
@@ -495,7 +516,7 @@ pub unsafe fn gemm_basic_generic<
             let mut row_outer = 0;
             while row_outer != m {
                 let mut m_chunk = mc.min(m - row_outer);
-                if m_chunk > N {
+                if m_chunk > N && !do_prepack_lhs {
                     m_chunk = m_chunk / N * N;
                 }
                 let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
