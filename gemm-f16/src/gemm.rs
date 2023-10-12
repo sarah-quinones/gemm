@@ -1,3 +1,5 @@
+use core::any::TypeId;
+
 use dyn_stack::{DynStack, GlobalMemBuffer, StackReq};
 use gemm_common::{
     cache::{div_ceil, kernel_params, KernelParams},
@@ -9,6 +11,8 @@ use gemm_common::{
     Parallelism, Ptr,
 };
 type T = half::f16;
+
+use gemm_common::simd::*;
 
 #[inline(always)]
 unsafe fn pack_generic_inner_loop<
@@ -27,6 +31,74 @@ unsafe fn pack_generic_inner_loop<
     assert_eq!(N, S::SIMD_WIDTH);
 
     if src_rs == 1 {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            let id = TypeId::of::<S>();
+            if id == TypeId::of::<V3>() {
+                let half_simd = V3Half::try_new().unwrap();
+
+                if src_width == 4 {
+                    for _ in 0..k {
+                        {
+                            let dst = dst as *mut [f32; 4];
+                            *dst = half_simd.simd_from_dst(*(src as *const [T; 4]));
+                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                                dst.add(src_width) as _,
+                                DST_WIDTH - src_width,
+                            ));
+                        }
+                        src = src.wrapping_offset(src_cs);
+                        dst = dst.add(DST_WIDTH);
+                    }
+                    return;
+                }
+            }
+
+            #[cfg(feature = "nightly")]
+            if id == TypeId::of::<V4>() {
+                let half_simd = V3::try_new().unwrap_unchecked();
+                let quarter_simd = V3Half::try_new().unwrap_unchecked();
+
+                if src_width == 4 {
+                    for _ in 0..k {
+                        {
+                            let dst = dst as *mut [f32; 4];
+                            *dst = <V3Half as MixedSimd<T, T, T, f32>>::simd_from_dst(
+                                quarter_simd,
+                                *(src as *const [T; 4]),
+                            );
+                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                                dst.add(src_width) as _,
+                                DST_WIDTH - src_width,
+                            ));
+                        }
+                        src = src.wrapping_offset(src_cs);
+                        dst = dst.add(DST_WIDTH);
+                    }
+                    return;
+                }
+
+                if src_width == 8 {
+                    for _ in 0..k {
+                        {
+                            let dst = dst as *mut [f32; 8];
+                            *dst = <V3 as MixedSimd<T, T, T, f32>>::simd_from_dst(
+                                half_simd,
+                                *(src as *const [T; 8]),
+                            );
+                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                                dst.add(src_width) as _,
+                                DST_WIDTH - src_width,
+                            ));
+                        }
+                        src = src.wrapping_offset(src_cs);
+                        dst = dst.add(DST_WIDTH);
+                    }
+                    return;
+                }
+            }
+        }
+
         if src_width == N {
             for _ in 0..k {
                 for j in 0..1 {
@@ -38,7 +110,8 @@ unsafe fn pack_generic_inner_loop<
                 dst = dst.add(DST_WIDTH);
             }
             return;
-        } else if src_width == 2 * N {
+        }
+        if src_width == 2 * N {
             for _ in 0..k {
                 for j in 0..2 {
                     let j = j * N;
@@ -49,7 +122,8 @@ unsafe fn pack_generic_inner_loop<
                 dst = dst.add(DST_WIDTH);
             }
             return;
-        } else if src_width == 3 * N {
+        }
+        if src_width == 3 * N {
             for _ in 0..k {
                 for j in 0..3 {
                     let j = j * N;
@@ -67,8 +141,8 @@ unsafe fn pack_generic_inner_loop<
         for j in 0..src_width {
             *dst.add(j) = simd.from_lhs(*src.offset(j as isize * src_rs));
         }
-        quick_zero(core::slice::from_raw_parts_mut(
-            dst.add(src_width),
+        quick_zero::<f32>(core::slice::from_raw_parts_mut(
+            dst.add(src_width) as _,
             DST_WIDTH - src_width,
         ));
         src = src.wrapping_offset(src_cs);
@@ -348,17 +422,37 @@ pub unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
-    let mut mem = GlobalMemBuffer::new(StackReq::new_aligned::<f32>(
-        packed_rhs_stride * (nc / NR),
+    let do_prepack_lhs = m <= 2 * mc && ((m % N != 0) || lhs_rs != 1);
+
+    let rhs_req = StackReq::new_aligned::<f32>(packed_rhs_stride * (nc / NR), simd_align);
+    let lhs_req = StackReq::new_aligned::<f32>(
+        if do_prepack_lhs {
+            packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+        } else {
+            0
+        },
         simd_align,
-    ));
+    );
+
+    let mut mem = GlobalMemBuffer::new(rhs_req.and(lhs_req));
 
     let stack = DynStack::new(&mut mem);
-    let mut packed_rhs_storage = stack
-        .make_aligned_uninit::<f32>(packed_rhs_stride * (nc / NR), simd_align)
+    let (mut packed_rhs_storage, stack) =
+        stack.make_aligned_uninit::<f32>(packed_rhs_stride * (nc / NR), simd_align);
+
+    let mut packed_lhs_storage = stack
+        .make_aligned_uninit::<f32>(
+            if do_prepack_lhs {
+                packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+            } else {
+                0
+            },
+            simd_align,
+        )
         .0;
 
     let packed_rhs = Ptr(packed_rhs_storage.as_mut_ptr() as *mut f32);
+    let prepacked_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut f32);
 
     let packed_rhs_rs = NR as isize;
     let packed_rhs_cs = 1;
@@ -397,7 +491,7 @@ pub unsafe fn gemm_basic_generic<
             };
 
             // pack rhs
-            if n_threads <= 1 {
+            if true || n_threads <= 1 {
                 pack_rhs::<N, NR, _>(
                     simd,
                     n_chunk,
@@ -452,6 +546,18 @@ pub unsafe fn gemm_basic_generic<
                 };
                 par_for_each(n_threads, func);
             }
+            if do_prepack_lhs {
+                pack_lhs::<N, MR, _>(
+                    simd,
+                    m,
+                    k_chunk,
+                    prepacked_lhs,
+                    lhs.wrapping_offset(depth_outer as isize * lhs_cs),
+                    lhs_cs,
+                    lhs_rs,
+                    packed_lhs_stride,
+                );
+            }
 
             let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
 
@@ -459,7 +565,7 @@ pub unsafe fn gemm_basic_generic<
             let mut row_outer = 0;
             while row_outer != m {
                 let mut m_chunk = mc.min(m - row_outer);
-                if m_chunk > N {
+                if m_chunk > N && !do_prepack_lhs {
                     m_chunk = m_chunk / N * N;
                 }
                 let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
@@ -496,7 +602,7 @@ pub unsafe fn gemm_basic_generic<
                     let mut job_id = 0;
                     while row_outer != m {
                         let mut m_chunk = mc.min(m - row_outer);
-                        if m_chunk > N {
+                        if m_chunk > N && !do_prepack_lhs {
                             m_chunk = m_chunk / N * N;
                         }
                         let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
@@ -514,18 +620,20 @@ pub unsafe fn gemm_basic_generic<
 
                         let packed_lhs_cs = MR as isize;
 
-                        pack_lhs::<N, MR, _>(
-                            simd,
-                            m_chunk,
-                            k_chunk,
-                            packed_lhs,
-                            lhs.wrapping_offset(
-                                row_outer as isize * lhs_rs + depth_outer as isize * lhs_cs,
-                            ),
-                            lhs_cs,
-                            lhs_rs,
-                            packed_lhs_stride,
-                        );
+                        if !do_prepack_lhs {
+                            pack_lhs::<N, MR, _>(
+                                simd,
+                                m_chunk,
+                                k_chunk,
+                                packed_lhs,
+                                lhs.wrapping_offset(
+                                    row_outer as isize * lhs_rs + depth_outer as isize * lhs_cs,
+                                ),
+                                lhs_cs,
+                                lhs_rs,
+                                packed_lhs_stride,
+                            );
+                        }
 
                         let mut j = 0;
                         while j < n_col_mini_chunks {
@@ -560,7 +668,11 @@ pub unsafe fn gemm_basic_generic<
                                     n_chunk_inner,
                                     k_chunk,
                                     tmp.as_mut_ptr() as *mut f32,
-                                    packed_lhs.wrapping_add(i * packed_lhs_stride).0,
+                                    if do_prepack_lhs {
+                                        prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
+                                    } else {
+                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                    },
                                     packed_rhs.wrapping_add(j * packed_rhs_stride).0,
                                     MR as isize,
                                     1,

@@ -10,7 +10,7 @@ pub use aarch64::*;
 
 use crate::gemm::{c32, c64};
 
-pub trait Simd: Copy + Send + Sync {
+pub trait Simd: Copy + Send + Sync + 'static {
     unsafe fn vectorize<F: NullaryFnOnce>(f: F) -> F::Output;
 }
 
@@ -546,6 +546,11 @@ mod x86 {
         }
     }
 
+    #[derive(Debug, Copy, Clone)]
+    pub struct V3Half {
+        __private: (),
+    }
+
     pulp::simd_type! {
         pub struct V3 {
             pub sse: "sse",
@@ -578,6 +583,106 @@ mod x86 {
             pub fma: "fma",
             pub f16c: "f16c",
             pub avx512f: "avx512f",
+        }
+    }
+
+    impl Simd for V3Half {
+        unsafe fn vectorize<F: NullaryFnOnce>(f: F) -> F::Output {
+            f.call()
+        }
+    }
+
+    unsafe impl MixedSimd<f16, f16, f16, f32> for V3Half {
+        const SIMD_WIDTH: usize = 4;
+
+        type LhsN = [f16; 4];
+        type RhsN = [f16; 4];
+        type DstN = [f16; 4];
+        type AccN = [f32; 4];
+
+        #[inline]
+        fn try_new() -> Option<Self> {
+            Some(Self { __private: () })
+        }
+
+        #[inline(always)]
+        fn mult(self, lhs: f32, rhs: f32) -> f32 {
+            lhs * rhs
+        }
+
+        #[inline(always)]
+        fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
+            f32::mul_add(lhs, rhs, acc)
+        }
+
+        #[inline(always)]
+        fn from_lhs(self, _lhs: f16) -> f32 {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn from_rhs(self, _rhs: f16) -> f32 {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn from_dst(self, _dst: f16) -> f32 {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn into_dst(self, _acc: f32) -> f16 {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_mult_add(self, _lhs: Self::AccN, _rhs: Self::AccN, _acc: Self::AccN) -> Self::AccN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_from_lhs(self, _lhs: Self::LhsN) -> Self::AccN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_from_rhs(self, _rhs: Self::RhsN) -> Self::AccN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_splat(self, _lhs: f32) -> Self::AccN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_from_dst(self, dst: Self::DstN) -> Self::AccN {
+            unsafe { cast(_mm_cvtph_ps(cast([dst, [f16::ZERO; 4]]))) }
+        }
+
+        #[inline(always)]
+        fn simd_into_dst(self, _acc: Self::AccN) -> Self::DstN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn vectorize<F: NullaryFnOnce>(self, _f: F) -> F::Output {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn add(self, _lhs: f32, _rhs: f32) -> f32 {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_mul(self, _lhs: Self::AccN, _rhs: Self::AccN) -> Self::AccN {
+            todo!()
+        }
+
+        #[inline(always)]
+        fn simd_add(self, _lhs: Self::AccN, _rhs: Self::AccN) -> Self::AccN {
+            todo!()
         }
     }
 

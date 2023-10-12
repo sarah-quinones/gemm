@@ -1,7 +1,7 @@
 use crate::simd::Simd;
 
 #[inline(always)]
-pub fn quick_zero<T: Copy>(slice: &mut [T]) {
+pub fn quick_zero<T: Copy>(slice: &mut [core::mem::MaybeUninit<T>]) {
     let n = slice.len();
     match n {
         1 => unsafe { *(slice.as_mut_ptr() as *mut [T; 1]) = core::mem::zeroed() },
@@ -216,8 +216,8 @@ unsafe fn pack_generic_inner_loop<T: Copy, const N: usize, const DST_WIDTH: usiz
         if src_rs == 1 {
             for _ in 0..k {
                 quick_copy(dst, src, src_width);
-                quick_zero(core::slice::from_raw_parts_mut(
-                    dst.add(src_width),
+                quick_zero::<T>(core::slice::from_raw_parts_mut(
+                    dst.add(src_width) as _,
                     DST_WIDTH - src_width,
                 ));
                 src = src.wrapping_offset(src_cs);
@@ -228,8 +228,8 @@ unsafe fn pack_generic_inner_loop<T: Copy, const N: usize, const DST_WIDTH: usiz
                 for j in 0..src_width {
                     *dst.add(j) = *src.offset(j as isize * src_rs);
                 }
-                quick_zero(core::slice::from_raw_parts_mut(
-                    dst.add(src_width),
+                quick_zero::<T>(core::slice::from_raw_parts_mut(
+                    dst.add(src_width) as _,
                     DST_WIDTH - src_width,
                 ));
                 src = src.wrapping_offset(src_cs);
