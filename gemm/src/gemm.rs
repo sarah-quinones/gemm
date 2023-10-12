@@ -148,7 +148,7 @@ unsafe fn gemm_dispatch<T: 'static>(
 ///
 /// # Panics
 ///
-/// Panics if `T` is not `f32` or `f64`
+/// Panics if `T` is not `f32`, `f64`, `gemm::f16`, `gemm::c32`, or `gemm::c64`.
 pub unsafe fn gemm<T: 'static>(
     m: usize,
     n: usize,

@@ -4,9 +4,8 @@
 
 mod gemm;
 
-pub use crate::gemm::*;
+pub use crate::gemm::{c32, c64, f16, gemm};
 pub use gemm_common::Parallelism;
-pub use gemm_f16::f16;
 
 pub use gemm_common::gemm::{
     get_lhs_packing_threshold_multi_thread, get_lhs_packing_threshold_single_thread,
