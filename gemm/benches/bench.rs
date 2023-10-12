@@ -4,6 +4,50 @@ use gemm::*;
 use nalgebra::DMatrix;
 use std::time::Duration;
 
+#[inline(never)]
+unsafe fn gemm_fallback<T>(
+    m: usize,
+    n: usize,
+    k: usize,
+    dst: *mut T,
+    dst_cs: isize,
+    dst_rs: isize,
+    read_dst: bool,
+    lhs: *const T,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
+    rhs_rs: isize,
+    alpha: T,
+    beta: T,
+) where
+    T: num_traits::Zero + Send + Sync,
+    for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
+    for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,
+{
+    (0..m).for_each(|row| {
+        (0..n).for_each(|col| {
+            let mut accum = <T as num_traits::Zero>::zero();
+            for depth in 0..k {
+                let lhs = &*lhs.wrapping_offset(row as isize * lhs_rs + depth as isize * lhs_cs);
+
+                let rhs = &*rhs.wrapping_offset(depth as isize * rhs_rs + col as isize * rhs_cs);
+
+                accum = &accum + &(lhs * rhs);
+            }
+            accum = &accum * &beta;
+
+            let dst = dst.wrapping_offset(row as isize * dst_rs + col as isize * dst_cs);
+            if read_dst {
+                accum = &accum + &(&alpha * &*dst);
+            }
+            *dst = accum
+        });
+    });
+    return;
+}
+
 pub fn criterion_benchmark(c: &mut Criterion) {
     gemm::set_wasm_simd128(true);
     {
@@ -11,6 +55,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let mut push = |m, n, k| {
             mnks.push((m, n, k));
         };
+        push(6, 768 * 3, 768);
         push(64, 64, 64);
         push(8192, 8192, 8192);
         push(4096, 4096, 4096);

@@ -26,6 +26,7 @@ mod tests {
     #[test]
     fn test_gemm_f16() {
         let mut mnks = vec![];
+        mnks.push((63, 2, 10));
         mnks.push((16, 2, 1));
         mnks.push((0, 0, 4));
         mnks.push((16, 1, 1));
@@ -49,7 +50,6 @@ mod tests {
         mnks.push((1024, 1024, 1));
         mnks.push((1024, 1024, 4));
         mnks.push((63, 1, 10));
-        mnks.push((63, 2, 10));
         mnks.push((63, 3, 10));
         mnks.push((63, 4, 10));
         mnks.push((1, 63, 10));
@@ -135,9 +135,9 @@ mod tests {
         set_wasm_simd128(true);
 
         let mut mnks = vec![];
+        mnks.push((63, 2, 10));
         mnks.push((1, 2, 10));
         mnks.push((1, 63, 10));
-        mnks.push((63, 2, 10));
 
         // large m to trigger parallelized rhs packing with big number of threads and small n
         mnks.push((2048, 255, 255));

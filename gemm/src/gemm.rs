@@ -235,7 +235,7 @@ pub unsafe fn gemm<T: 'static>(
 }
 
 #[inline(never)]
-#[doc(hidden)]
+#[cfg(test)]
 pub unsafe fn gemm_fallback<T>(
     m: usize,
     n: usize,

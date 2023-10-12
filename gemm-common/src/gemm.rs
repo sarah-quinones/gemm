@@ -316,6 +316,8 @@ pub unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
+    let threading_threshold = get_threading_threshold();
+
     #[cfg(target_arch = "aarch64")]
     let do_pack_rhs = m > get_rhs_packing_threshold() * MR;
 
@@ -323,34 +325,64 @@ pub unsafe fn gemm_basic_generic<
     #[cfg(not(target_arch = "aarch64"))]
     let do_pack_rhs = (rhs_rs.unsigned_abs() != 1 && m > 2 * MR)
         || (rhs_rs.unsigned_abs() == 1 && m > get_rhs_packing_threshold() * MR);
+    let do_prepack_lhs = m < mc && ((m % N != 0) || lhs_rs != 1);
 
-    let mut mem = if do_pack_rhs {
-        Some(GlobalMemBuffer::new(StackReq::new_aligned::<T>(
-            packed_rhs_stride * (nc / NR),
+    let mut mem = if do_pack_rhs || do_prepack_lhs {
+        let rhs_req = StackReq::new_aligned::<T>(packed_rhs_stride * (nc / NR), simd_align);
+        let lhs_req = StackReq::new_aligned::<T>(
+            packed_lhs_stride * (Ord::min(m, mc).next_multiple_of(MR) / MR),
             simd_align,
-        )))
+        );
+        Some(GlobalMemBuffer::new(lhs_req.and(rhs_req)))
     } else {
         None
     };
 
-    let mut packed_rhs_storage = mem.as_mut().map(|mem| {
+    let mut packed_storage = mem.as_mut().map(|mem| {
         let stack = DynStack::new(mem);
-        stack
-            .make_aligned_uninit::<T>(packed_rhs_stride * (nc / NR), simd_align)
-            .0
+        let (rhs, stack) =
+            stack.make_aligned_uninit::<T>(packed_rhs_stride * (nc / NR), simd_align);
+
+        (
+            rhs,
+            stack
+                .make_aligned_uninit::<T>(
+                    packed_lhs_stride * (Ord::min(m, mc).next_multiple_of(MR) / MR),
+                    simd_align,
+                )
+                .0,
+        )
     });
 
-    let packed_rhs = packed_rhs_storage
+    let (packed_rhs, prepacked_lhs) = packed_storage
         .as_mut()
-        .map(|storage| storage.as_mut_ptr() as *mut T)
-        .unwrap_or(core::ptr::null_mut());
+        .map(|storage| {
+            (
+                storage.0.as_mut_ptr() as *mut T,
+                storage.1.as_mut_ptr() as *mut T,
+            )
+        })
+        .unwrap_or((core::ptr::null_mut(), core::ptr::null_mut()));
+
     let packed_rhs = Ptr(packed_rhs);
+    let prepacked_lhs = Ptr(prepacked_lhs);
 
     let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
 
     let mut did_pack_lhs = vec![false; mc / MR];
     let did_pack_lhs = Ptr((&mut *did_pack_lhs) as *mut _);
+
+    let max_threads = match parallelism {
+        Parallelism::None => 1,
+        Parallelism::Rayon(n_threads) => {
+            if n_threads == 0 {
+                rayon::current_num_threads()
+            } else {
+                n_threads
+            }
+        }
+    };
 
     let mut col_outer = 0;
     while col_outer != n {
@@ -372,21 +404,20 @@ pub unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
-                Parallelism::Rayon(n_threads) => {
-                    let threading_threshold = get_threading_threshold();
+                Parallelism::Rayon(_) => {
                     let total_work = (m * n_chunk).saturating_mul(k_chunk);
                     if total_work < threading_threshold {
                         1
                     } else {
-                        let max_threads = if n_threads == 0 {
-                            rayon::current_num_threads()
-                        } else {
-                            n_threads
-                        };
-
                         max_threads
                     }
                 }
+            };
+
+            let packing_threshold = if n_threads == 1 {
+                get_lhs_packing_threshold_single_thread()
+            } else {
+                get_lhs_packing_threshold_multi_thread()
             };
 
             if do_pack_rhs {
@@ -445,6 +476,18 @@ pub unsafe fn gemm_basic_generic<
                     par_for_each(n_threads, func);
                 }
             }
+            if do_prepack_lhs {
+                pack_lhs::<T, N, MR, _>(
+                    simd,
+                    m,
+                    k_chunk,
+                    prepacked_lhs,
+                    lhs.wrapping_offset(depth_outer as isize * lhs_cs),
+                    lhs_cs,
+                    lhs_rs,
+                    packed_lhs_stride,
+                );
+            }
 
             let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
 
@@ -459,8 +502,6 @@ pub unsafe fn gemm_basic_generic<
                 n_jobs += n_col_mini_chunks * n_row_mini_chunks;
                 row_outer += m_chunk;
             }
-
-            // use a single thread for small workloads
 
             let func = move |tid| {
                 L2_SLAB.with(|mem| {
@@ -495,7 +536,7 @@ pub unsafe fn gemm_basic_generic<
                     let mut job_id = 0;
                     while row_outer != m {
                         let mut m_chunk = mc.min(m - row_outer);
-                        if m_chunk > N {
+                        if m_chunk > N && !do_prepack_lhs {
                             m_chunk = m_chunk / N * N;
                         }
                         let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
@@ -511,14 +552,15 @@ pub unsafe fn gemm_basic_generic<
                             continue;
                         }
 
-                        let packing_threshold = if n_threads == 1 {
-                            get_lhs_packing_threshold_single_thread()
+                        let do_pack_lhs = !do_prepack_lhs
+                            && ((m_chunk % N != 0)
+                                || lhs_rs != 1
+                                || n_chunk > packing_threshold * NR);
+                        let packed_lhs_cs = if do_prepack_lhs || do_pack_lhs {
+                            MR as isize
                         } else {
-                            get_lhs_packing_threshold_multi_thread()
+                            lhs_cs
                         };
-                        let do_pack_lhs =
-                            (m_chunk % N != 0) || lhs_rs != 1 || n_chunk > packing_threshold * NR;
-                        let packed_lhs_cs = if do_pack_lhs { MR as isize } else { lhs_cs };
 
                         let mut j = 0;
                         did_pack_lhs.fill(false);
@@ -571,6 +613,8 @@ pub unsafe fn gemm_basic_generic<
                                     dst.0,
                                     if do_pack_lhs {
                                         packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                    } else if do_prepack_lhs {
+                                        prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
                                     } else {
                                         lhs.wrapping_offset(
                                             (row_outer + row_inner) as isize * lhs_rs
@@ -598,16 +642,7 @@ pub unsafe fn gemm_basic_generic<
                                     conj_dst,
                                     conj_lhs,
                                     conj_rhs,
-                                    if do_pack_lhs {
-                                        packed_lhs.wrapping_add((i + 1) * packed_lhs_stride).0
-                                    } else {
-                                        lhs.wrapping_offset(
-                                            (row_outer + row_inner + m_chunk_inner) as isize
-                                                * lhs_rs
-                                                + depth_outer as isize * lhs_cs,
-                                        )
-                                        .0
-                                    },
+                                    core::ptr::null(),
                                 );
                                 i += 1;
                             }
