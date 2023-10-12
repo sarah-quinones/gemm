@@ -3,13 +3,14 @@ use crate::{
     gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::{pack_lhs, pack_rhs},
-    simd::Simd,
+    simd::MixedSimd,
     Parallelism, Ptr,
 };
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
+use half::f16;
 use num_traits::{One, Zero};
 
 #[allow(non_camel_case_types)]
@@ -63,6 +64,13 @@ thread_local! {
 
 pub trait Conj: Copy {
     fn conj(self) -> Self;
+}
+
+impl Conj for f16 {
+    #[inline(always)]
+    fn conj(self) -> Self {
+        self
+    }
 }
 
 impl Conj for f32 {
@@ -156,7 +164,7 @@ pub fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
 
 #[inline(always)]
 pub unsafe fn gemm_basic_generic<
-    S: Simd,
+    S: MixedSimd<T, T, T, T>,
     T: Copy
         + Zero
         + One
@@ -166,7 +174,8 @@ pub unsafe fn gemm_basic_generic<
         + core::fmt::Debug
         + core::ops::Add<Output = T>
         + core::ops::Mul<Output = T>
-        + core::cmp::PartialEq,
+        + core::cmp::PartialEq
+        + 'static,
     const N: usize,
     const MR: usize,
     const NR: usize,
@@ -244,17 +253,32 @@ pub unsafe fn gemm_basic_generic<
             );
             return;
         }
-        if m <= 1 && rhs_cs.unsigned_abs() <= rhs_rs.unsigned_abs() {
-            gemv::gemv(
-                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
-                alpha, beta, mul_add,
+
+        if n <= 1 && lhs_rs == 1 && dst_rs == 1 {
+            gemv::mixed_gemv_colmajor(
+                simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta,
             );
             return;
         }
-        if n <= 1 && lhs_rs.unsigned_abs() <= lhs_cs.unsigned_abs() {
-            gemv::gemv(
+        if n <= 1 && lhs_cs == 1 && rhs_rs == 1 {
+            gemv::mixed_gemv_rowmajor(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-                alpha, beta, mul_add,
+                alpha, beta,
+            );
+            return;
+        }
+        if m <= 1 && rhs_cs == 1 && dst_cs == 1 {
+            gemv::mixed_gemv_colmajor(
+                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+                alpha, beta,
+            );
+            return;
+        }
+        if m <= 1 && rhs_rs == 1 && lhs_cs == 1 {
+            gemv::mixed_gemv_rowmajor(
+                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+                alpha, beta,
             );
             return;
         }
@@ -620,6 +644,7 @@ macro_rules! __inject_mod {
     ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
         mod $module {
             use super::*;
+            use crate::gemm_common::simd::MixedSimd;
             use crate::microkernel::$module::$ty::*;
             const N: usize = $N;
 
@@ -646,7 +671,7 @@ macro_rules! __inject_mod {
                 parallelism: $crate::Parallelism,
             ) {
                 $crate::gemm::gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
-                    $crate::simd::$simd,
+                    <$crate::simd::$simd as MixedSimd<T, T, T, T>>::try_new().unwrap(),
                     m,
                     n,
                     k,
@@ -681,6 +706,7 @@ macro_rules! __inject_mod_cplx {
             mod [<$module _cplx>] {
                 use super::*;
                 use crate::microkernel::$module::$ty::*;
+                use crate::gemm_common::simd::MixedSimd;
                 const N: usize = $N;
 
                 #[inline(never)]
@@ -706,7 +732,7 @@ macro_rules! __inject_mod_cplx {
                     parallelism: $crate::Parallelism,
                     ) {
                     $crate::gemm::gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
-                        $crate::simd::$simd,
+                        <$crate::simd::$simd as MixedSimd<T, T, T, T>>::try_new().unwrap(),
                         m,
                         n,
                         k,
@@ -769,10 +795,6 @@ macro_rules! gemm_def {
                 }
                 if $crate::feature_detected!("fma") {
                     fma::gemm_basic
-                } else if $crate::feature_detected!("avx") {
-                    avx::gemm_basic
-                } else if $crate::feature_detected!("sse") && $crate::feature_detected!("sse2") {
-                    sse::gemm_basic
                 } else {
                     scalar::gemm_basic
                 }
@@ -787,7 +809,21 @@ macro_rules! gemm_def {
                 }
             }
 
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+            #[cfg(target_arch = "wasm32")]
+            {
+                if $crate::feature_detected!("simd128") {
+                    simd128::gemm_basic
+                } else {
+                    scalar::gemm_basic
+                }
+            }
+
+            #[cfg(not(any(
+                target_arch = "x86",
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "wasm32",
+            )))]
             {
                 scalar::gemm_basic
             }
@@ -800,16 +836,15 @@ macro_rules! gemm_def {
         $crate::__inject_mod!(scalar, $ty, 1, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        $crate::__inject_mod!(sse, $ty, 2 * $multiplier, Sse);
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        $crate::__inject_mod!(avx, $ty, 4 * $multiplier, Avx);
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        $crate::__inject_mod!(fma, $ty, 4 * $multiplier, Fma);
+        $crate::__inject_mod!(fma, $ty, 4 * $multiplier, V3);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, Avx512f);
+        $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, V4);
 
         #[cfg(target_arch = "aarch64")]
         $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+
+        #[cfg(target_arch = "wasm32")]
+        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Scalar);
     };
 }
 
@@ -860,8 +895,8 @@ macro_rules! gemm_cplx_def {
         $crate::__inject_mod_cplx!(scalar, $ty, 1, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        $crate::__inject_mod_cplx!(fma, $ty, 2 * $multiplier, Fma);
+        $crate::__inject_mod_cplx!(fma, $ty, 2 * $multiplier, V3);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        $crate::__inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, Avx512f);
+        $crate::__inject_mod_cplx!(avx512f, $ty, 4 * $multiplier, V4);
     };
 }

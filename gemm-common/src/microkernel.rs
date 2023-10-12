@@ -134,7 +134,7 @@ macro_rules! microkernel {
             _conj_rhs: bool,
             mut next_lhs: *const T,
         ) {
-            let mut accum_storage = [[splat(0.0); $mr_div_n]; $nr];
+            let mut accum_storage = [[splat(::core::mem::zeroed()); $mr_div_n]; $nr];
             let accum = accum_storage.as_mut_ptr() as *mut Pack;
 
             let mut lhs = [::core::mem::MaybeUninit::<Pack>::uninit(); $mr_div_n];
@@ -161,7 +161,7 @@ macro_rules! microkernel {
                     let next_lhs = self.next_lhs.wrapping_offset(iter as isize * self.lhs_cs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                        *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                        *self.lhs.add(M_ITER) = *(packed_lhs.add(M_ITER * N) as *const Pack);
                     }});
 
                     seq_macro::seq!(N_ITER in 0..$nr {{
@@ -188,11 +188,11 @@ macro_rules! microkernel {
                         let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                            *self.lhs.add(M_ITER) = (packed_lhs.add(M_ITER * N) as *const Pack).read_unaligned();
+                            *self.lhs.add(M_ITER) = *(packed_lhs.add(M_ITER * N) as *const Pack);
                         }});
 
                         seq_macro::seq!(N_ITER0 in 0..$nr_div_n {{
-                            *self.rhs = (packed_rhs.wrapping_offset(N_ITER0 * $n) as *const Pack).read_unaligned();
+                            *self.rhs = *(packed_rhs.wrapping_offset(N_ITER0 * $n) as *const Pack);
 
                             seq_macro::seq!(N_ITER1 in 0..$n {{
                                 const N_ITER: usize = N_ITER0 * $n + N_ITER1;
@@ -343,7 +343,7 @@ macro_rules! microkernel {
                         seq_macro::seq!(M_ITER in 0..$mr_div_n {{
                             let dst = dst.offset(M_ITER * N as isize + N_ITER * dst_cs) as *mut Pack;
                             dst.write_unaligned(add(
-                                    mul(alpha, dst.read_unaligned()),
+                                    mul(alpha, *dst),
                                     mul(beta, *accum.offset(M_ITER + $mr_div_n * N_ITER)),
                                     ));
                         }});
@@ -355,7 +355,7 @@ macro_rules! microkernel {
                             dst.write_unaligned(mul_add(
                                     beta,
                                     *accum.offset(M_ITER + $mr_div_n * N_ITER),
-                                    dst.read_unaligned(),
+                                    *dst,
                                     ));
                         }});
                     }});
@@ -380,7 +380,7 @@ macro_rules! microkernel {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
                             let src_ij = src_j.add(i);
 
-                            *dst_ij = alpha * *dst_ij + beta * *src_ij;
+                            *dst_ij = scalar_add(scalar_mul(alpha, *dst_ij), scalar_mul(beta, *src_ij));
                         }
                     }
                 } else if alpha_status == 1 {
@@ -392,7 +392,7 @@ macro_rules! microkernel {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
                             let src_ij = src_j.add(i);
 
-                            *dst_ij = *dst_ij + beta * *src_ij;
+                            *dst_ij = scalar_mul_add(beta, *src_ij, *dst_ij);
                         }
                     }
                 } else {
@@ -404,7 +404,7 @@ macro_rules! microkernel {
                             let dst_ij = dst_j.offset(dst_rs * i as isize);
                             let src_ij = src_j.add(i);
 
-                            *dst_ij = beta * *src_ij;
+                            *dst_ij = scalar_mul(beta, *src_ij);
                         }
                     }
                 }
@@ -474,7 +474,7 @@ macro_rules! microkernel_cplx {
                     let next_lhs = self.next_lhs.wrapping_offset(iter as isize * self.lhs_cs);
 
                     seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                        let tmp = (packed_lhs.add(M_ITER * CPLX_N) as *const Pack).read_unaligned();
+                        let tmp = *(packed_lhs.add(M_ITER * CPLX_N) as *const Pack);
                         *self.lhs_re_im.add(M_ITER) = tmp;
                         *self.lhs_im_re.add(M_ITER) = swap_re_im(tmp);
                     }});

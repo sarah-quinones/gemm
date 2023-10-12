@@ -26,3 +26,4 @@ half = { workspace = true }
 default = ["std"]
 std = ["pulp/std"]
 nightly = ["pulp/nightly"]
+wasm-simd128-enable = []

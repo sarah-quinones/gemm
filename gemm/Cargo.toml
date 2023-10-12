@@ -30,12 +30,17 @@ gemm-c64 = { version = "0.15", path = "../gemm-c64" }
 default = ["std"]
 std = []
 nightly = ["gemm-common/nightly", "gemm-f32/nightly", "gemm-f64/nightly", "gemm-c32/nightly", "gemm-c64/nightly"]
+wasm-simd128-enable = ["gemm-common/wasm-simd128-enable"]
 
 [dev-dependencies]
-criterion = "0.4"
-rand = "0.8.5"
+criterion = { version = "0.5", default-features = false }
 nalgebra = "0.32.2"
 assert_approx_eq = "1.1.0"
+rand = "0.8.5"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
 
 [[bench]]
 name = "bench"

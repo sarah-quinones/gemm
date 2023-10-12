@@ -6,8 +6,16 @@ mod gemm;
 
 pub use crate::gemm::*;
 pub use gemm_common::Parallelism;
-
 pub use gemm_f16::f16;
+
+pub use gemm_common::gemm::{
+    get_lhs_packing_threshold_multi_thread, get_lhs_packing_threshold_single_thread,
+    get_rhs_packing_threshold, get_threading_threshold, set_lhs_packing_threshold_multi_thread,
+    set_lhs_packing_threshold_single_thread, set_rhs_packing_threshold, set_threading_threshold,
+    DEFAULT_LHS_PACKING_THRESHOLD_MULTI_THREAD, DEFAULT_LHS_PACKING_THRESHOLD_SINGLE_THREAD,
+    DEFAULT_RHS_PACKING_THRESHOLD, DEFAULT_THREADING_THRESHOLD,
+};
+pub use gemm_common::{get_wasm_simd128, set_wasm_simd128, DEFAULT_WASM_SIMD128};
 
 #[cfg(test)]
 mod tests {
@@ -125,7 +133,13 @@ mod tests {
 
     #[test]
     fn test_gemm_real() {
+        set_wasm_simd128(true);
+
         let mut mnks = vec![];
+        mnks.push((1, 2, 10));
+        mnks.push((1, 63, 10));
+        mnks.push((63, 2, 10));
+
         // large m to trigger parallelized rhs packing with big number of threads and small n
         mnks.push((2048, 255, 255));
 
@@ -152,10 +166,8 @@ mod tests {
         mnks.push((1024, 1024, 1));
         mnks.push((1024, 1024, 4));
         mnks.push((63, 1, 10));
-        mnks.push((63, 2, 10));
         mnks.push((63, 3, 10));
         mnks.push((63, 4, 10));
-        mnks.push((1, 63, 10));
         mnks.push((2, 63, 10));
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
