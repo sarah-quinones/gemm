@@ -5,69 +5,8 @@ use nalgebra::DMatrix;
 use std::time::Duration;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
+    gemm::set_wasm_simd128(true);
     {
-        let m = 1024;
-        let k = 1024;
-        let n = 7;
-
-        let zero = 0.0f32;
-        let one = 1.0f32;
-
-        let a_vec = vec![zero; m * k];
-        let b_vec = vec![zero; k * n];
-        let mut c_vec = vec![zero; m * n];
-
-        c.bench_function("old", |b| {
-            b.iter(|| unsafe {
-                gemm(
-                    m,
-                    n,
-                    k,
-                    c_vec.as_mut_ptr(),
-                    m as _,
-                    1,
-                    false,
-                    a_vec.as_ptr(),
-                    m as _,
-                    1,
-                    b_vec.as_ptr(),
-                    k as _,
-                    1,
-                    one,
-                    one,
-                    false,
-                    false,
-                    false,
-                    Parallelism::None,
-                );
-            });
-        });
-
-        if let Some(simd) = gemm_common::simd::V3::try_new() {
-            c.bench_function("new", |b| {
-                b.iter(|| unsafe {
-                    gemm_common::gemv::mixed_gemv_colmajor(
-                        simd,
-                        m,
-                        n,
-                        k,
-                        c_vec.as_mut_ptr(),
-                        m as _,
-                        1,
-                        a_vec.as_ptr(),
-                        m as _,
-                        1,
-                        b_vec.as_ptr(),
-                        k as _,
-                        1,
-                        1.0f32,
-                    );
-                });
-            });
-        }
-    }
-
-    if false {
         let mut mnks = vec![];
         let mut push = |m, n, k| {
             mnks.push((m, n, k));

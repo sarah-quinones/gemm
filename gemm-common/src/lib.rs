@@ -1,5 +1,24 @@
 #![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
 
+use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
+
+#[cfg(feature = "wasm-simd128-enable")]
+pub const DEFAULT_WASM_SIMD128: bool = true;
+
+#[cfg(not(feature = "wasm-simd128-enable"))]
+pub const DEFAULT_WASM_SIMD128: bool = false;
+
+static WASM_SIMD128: AtomicBool = AtomicBool::new(DEFAULT_WASM_SIMD128);
+
+#[inline]
+pub fn get_wasm_simd128() -> bool {
+    WASM_SIMD128.load(Relaxed)
+}
+#[inline]
+pub fn set_wasm_simd128(enable: bool) {
+    WASM_SIMD128.store(enable, Relaxed)
+}
+
 pub mod cache;
 
 pub mod gemm;
@@ -60,5 +79,12 @@ macro_rules! feature_detected {
 macro_rules! feature_detected {
     ($tt: tt) => {
         ::std::arch::is_aarch64_feature_detected!($tt)
+    };
+}
+#[cfg(all(feature = "std", target_family = "wasm"))]
+#[macro_export]
+macro_rules! feature_detected {
+    ("simd128") => {
+        $crate::get_wasm_simd128()
     };
 }

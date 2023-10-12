@@ -2,14 +2,21 @@ use dyn_stack::{DynStack, GlobalMemBuffer, StackReq};
 use gemm_common::{
     cache::{div_ceil, kernel_params, KernelParams},
     gemm::{get_threading_threshold, par_for_each, CACHELINE_ALIGN, L2_SLAB},
+    gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::quick_zero,
+    simd::{MixedSimd, NullaryFnOnce},
     Parallelism, Ptr,
 };
 type T = half::f16;
 
 #[inline(always)]
-unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
+unsafe fn pack_generic_inner_loop<
+    const N: usize,
+    const DST_WIDTH: usize,
+    S: MixedSimd<T, T, T, f32>,
+>(
+    simd: S,
     mut dst: *mut f32,
     mut src: *const T,
     src_rs: isize,
@@ -17,9 +24,48 @@ unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
     src_width: usize,
     k: usize,
 ) {
+    assert_eq!(N, S::SIMD_WIDTH);
+
+    if src_rs == 1 {
+        if src_width == N {
+            for _ in 0..k {
+                for j in 0..1 {
+                    let j = j * N;
+                    let dst = dst.add(j) as *mut S::AccN;
+                    *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+            return;
+        } else if src_width == 2 * N {
+            for _ in 0..k {
+                for j in 0..2 {
+                    let j = j * N;
+                    let dst = dst.add(j) as *mut S::AccN;
+                    *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+            return;
+        } else if src_width == 3 * N {
+            for _ in 0..k {
+                for j in 0..3 {
+                    let j = j * N;
+                    let dst = dst.add(j) as *mut S::AccN;
+                    *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
+                }
+                src = src.wrapping_offset(src_cs);
+                dst = dst.add(DST_WIDTH);
+            }
+            return;
+        }
+    }
+
     for _ in 0..k {
         for j in 0..src_width {
-            *dst.add(j) = (*src.offset(j as isize * src_rs)).into();
+            *dst.add(j) = simd.from_lhs(*src.offset(j as isize * src_rs));
         }
         quick_zero(core::slice::from_raw_parts_mut(
             dst.add(src_width),
@@ -31,7 +77,8 @@ unsafe fn pack_generic_inner_loop<const N: usize, const DST_WIDTH: usize>(
 }
 
 #[inline(always)]
-unsafe fn pack_generic<const N: usize, const DST_WIDTH: usize>(
+unsafe fn pack_generic<const N: usize, const DST_WIDTH: usize, S: MixedSimd<T, T, T, f32>>(
+    simd: S,
     m: usize,
     k: usize,
     mut dst: *mut f32,
@@ -44,19 +91,20 @@ unsafe fn pack_generic<const N: usize, const DST_WIDTH: usize>(
 
     let mut i = 0;
     while i < m_width {
-        pack_generic_inner_loop::<N, DST_WIDTH>(dst, src, src_rs, src_cs, DST_WIDTH, k);
+        pack_generic_inner_loop::<N, DST_WIDTH, _>(simd, dst, src, src_rs, src_cs, DST_WIDTH, k);
         src = src.wrapping_offset(src_rs * DST_WIDTH as isize);
         dst = dst.add(dst_stride);
 
         i += DST_WIDTH;
     }
     if i < m {
-        pack_generic_inner_loop::<N, DST_WIDTH>(dst, src, src_rs, src_cs, m - i, k);
+        pack_generic_inner_loop::<N, DST_WIDTH, _>(simd, dst, src, src_rs, src_cs, m - i, k);
     }
 }
 
 #[inline(never)]
-pub unsafe fn pack_lhs<const N: usize, const MR: usize>(
+pub unsafe fn pack_lhs<const N: usize, const MR: usize, S: MixedSimd<T, T, T, f32>>(
+    simd: S,
     m: usize,
     k: usize,
     dst: Ptr<f32>,
@@ -67,11 +115,50 @@ pub unsafe fn pack_lhs<const N: usize, const MR: usize>(
 ) {
     let dst = dst.0;
     let src = src.0;
-    pack_generic::<N, MR>(m, k, dst, src, src_cs, src_rs, dst_stride);
+    struct Impl<const N: usize, const MR: usize, S> {
+        simd: S,
+        m: usize,
+        k: usize,
+        dst: *mut f32,
+        src: *mut T,
+        src_cs: isize,
+        src_rs: isize,
+        dst_stride: usize,
+    }
+    impl<const N: usize, const MR: usize, S: MixedSimd<T, T, T, f32>> NullaryFnOnce for Impl<N, MR, S> {
+        type Output = ();
+
+        #[inline(always)]
+        fn call(self) -> Self::Output {
+            let Self {
+                simd,
+                m,
+                k,
+                dst,
+                src,
+                src_cs,
+                src_rs,
+                dst_stride,
+            } = self;
+            unsafe { pack_generic::<N, MR, _>(simd, m, k, dst, src, src_cs, src_rs, dst_stride) };
+        }
+    }
+
+    simd.vectorize(Impl::<N, MR, _> {
+        simd,
+        m,
+        k,
+        dst,
+        src,
+        src_cs,
+        src_rs,
+        dst_stride,
+    });
 }
 
 #[inline(never)]
-pub unsafe fn pack_rhs<const N: usize, const NR: usize>(
+pub unsafe fn pack_rhs<const N: usize, const NR: usize, S: MixedSimd<T, T, T, f32>>(
+    simd: S,
     n: usize,
     k: usize,
     dst: Ptr<f32>,
@@ -82,7 +169,46 @@ pub unsafe fn pack_rhs<const N: usize, const NR: usize>(
 ) {
     let dst = dst.0;
     let src = src.0;
-    pack_generic::<N, NR>(n, k, dst, src, src_rs, src_cs, dst_stride);
+
+    struct Impl<const N: usize, const NR: usize, S> {
+        simd: S,
+        n: usize,
+        k: usize,
+        dst: *mut f32,
+        src: *mut T,
+        src_cs: isize,
+        src_rs: isize,
+        dst_stride: usize,
+    }
+    impl<const N: usize, const NR: usize, S: MixedSimd<T, T, T, f32>> NullaryFnOnce for Impl<N, NR, S> {
+        type Output = ();
+
+        #[inline(always)]
+        fn call(self) -> Self::Output {
+            let Self {
+                simd,
+                n,
+                k,
+                dst,
+                src,
+                src_cs,
+                src_rs,
+                dst_stride,
+            } = self;
+            unsafe { pack_generic::<N, NR, _>(simd, n, k, dst, src, src_rs, src_cs, dst_stride) };
+        }
+    }
+
+    simd.vectorize(Impl::<N, NR, _> {
+        simd,
+        n,
+        k,
+        dst,
+        src,
+        src_cs,
+        src_rs,
+        dst_stride,
+    });
 }
 
 #[inline(always)]
@@ -91,7 +217,9 @@ pub unsafe fn gemm_basic_generic<
     const MR: usize,
     const NR: usize,
     const MR_DIV_N: usize,
+    S: MixedSimd<T, T, T, f32>,
 >(
+    simd: S,
     m: usize,
     n: usize,
     k: usize,
@@ -139,6 +267,68 @@ pub unsafe fn gemm_basic_generic<
         return;
     }
 
+    {
+        if k <= 2 {
+            gevv::gevv(
+                simd,
+                m,
+                n,
+                k,
+                dst,
+                dst_cs,
+                dst_rs,
+                lhs,
+                lhs_cs,
+                lhs_rs,
+                rhs,
+                rhs_cs,
+                rhs_rs,
+                alpha,
+                beta,
+                |a, b, c| {
+                    simd.into_dst(simd.mult_add(
+                        simd.from_dst(a),
+                        simd.from_dst(b),
+                        simd.from_dst(c),
+                    ))
+                },
+            );
+            return;
+        }
+
+        let alpha = simd.from_dst(alpha);
+        let beta = simd.from_dst(beta);
+        if n <= 1 && lhs_rs == 1 && dst_rs == 1 {
+            gemv::mixed_gemv_colmajor(
+                simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta,
+            );
+            return;
+        }
+        if n <= 1 && lhs_cs == 1 && rhs_rs == 1 {
+            gemv::mixed_gemv_rowmajor(
+                simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
+                alpha, beta,
+            );
+            return;
+        }
+
+        if m <= 1 && rhs_cs == 1 && dst_cs == 1 {
+            gemv::mixed_gemv_colmajor(
+                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+                alpha, beta,
+            );
+            return;
+        }
+        if m <= 1 && rhs_rs == 1 && lhs_cs == 1 {
+            gemv::mixed_gemv_rowmajor(
+                simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
+                alpha, beta,
+            );
+            return;
+        }
+    }
+
     let KernelParams { kc, mc, nc } = kernel_params(m, n, k, MR, NR, core::mem::size_of::<f32>());
     let nc = if nc > 0 {
         nc
@@ -177,7 +367,7 @@ pub unsafe fn gemm_basic_generic<
     while col_outer != n {
         let n_chunk = nc.min(n - col_outer);
 
-        let mut alpha = alpha.to_f32();
+        let mut alpha = simd.from_lhs(alpha);
 
         let mut depth_outer = 0;
         while depth_outer != k {
@@ -208,7 +398,8 @@ pub unsafe fn gemm_basic_generic<
 
             // pack rhs
             if n_threads <= 1 {
-                pack_rhs::<1, NR>(
+                pack_rhs::<N, NR, _>(
+                    simd,
                     n_chunk,
                     k_chunk,
                     packed_rhs,
@@ -244,7 +435,8 @@ pub unsafe fn gemm_basic_generic<
                     let j = col_inner / NR;
 
                     if ncols > 0 {
-                        pack_rhs::<1, NR>(
+                        pack_rhs::<N, NR, _>(
+                            simd,
                             ncols,
                             k_chunk,
                             packed_rhs.wrapping_add(j * packed_rhs_stride),
@@ -322,7 +514,8 @@ pub unsafe fn gemm_basic_generic<
 
                         let packed_lhs_cs = MR as isize;
 
-                        pack_lhs::<N, MR>(
+                        pack_lhs::<N, MR, _>(
+                            simd,
                             m_chunk,
                             k_chunk,
                             packed_lhs,
@@ -391,7 +584,7 @@ pub unsafe fn gemm_basic_generic<
                                                     .wrapping_offset(j as isize * dst_cs)
                                                     .wrapping_offset(i as isize * dst_rs)
                                                     .0;
-                                                *dst = T::from_f32(tmp[j][i]);
+                                                *dst = simd.into_dst(tmp[j][i]);
                                             }
                                         }
                                     }
@@ -402,7 +595,8 @@ pub unsafe fn gemm_basic_generic<
                                                     .wrapping_offset(j as isize * dst_cs)
                                                     .wrapping_offset(i as isize * dst_rs)
                                                     .0;
-                                                *dst = T::from_f32((*dst).to_f32() + tmp[j][i]);
+                                                *dst =
+                                                    simd.into_dst(simd.from_dst(*dst) + tmp[j][i]);
                                             }
                                         }
                                     }
@@ -413,8 +607,8 @@ pub unsafe fn gemm_basic_generic<
                                                     .wrapping_offset(j as isize * dst_cs)
                                                     .wrapping_offset(i as isize * dst_rs)
                                                     .0;
-                                                *dst = T::from_f32(
-                                                    alpha * (*dst).to_f32() + tmp[j][i],
+                                                *dst = simd.into_dst(
+                                                    alpha * simd.from_dst(*dst) + tmp[j][i],
                                                 );
                                             }
                                         }
@@ -485,12 +679,6 @@ pub mod f16 {
             }
             if gemm_common::feature_detected!("fma") {
                 fma::gemm_basic
-            } else if gemm_common::feature_detected!("avx") {
-                avx::gemm_basic
-            } else if gemm_common::feature_detected!("sse")
-                && gemm_common::feature_detected!("sse2")
-            {
-                sse::gemm_basic
             } else {
                 scalar::gemm_basic
             }
@@ -499,7 +687,11 @@ pub mod f16 {
         #[cfg(target_arch = "aarch64")]
         {
             if gemm_common::feature_detected!("neon") {
-                neon::gemm_basic
+                if gemm_common::feature_detected!("fp16") {
+                    neonfp16::gemm_basic
+                } else {
+                    neon::gemm_basic
+                }
             } else {
                 scalar::gemm_basic
             }
@@ -517,6 +709,7 @@ pub mod f16 {
 
     mod scalar {
         use super::*;
+        use gemm_common::simd::Scalar;
         use gemm_f32::microkernel::scalar::f32::*;
         const N: usize = 1;
 
@@ -542,7 +735,8 @@ pub mod f16 {
             _conj_rhs: bool,
             parallelism: gemm_common::Parallelism,
         ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N, _>(
+                Scalar,
                 m,
                 n,
                 k,
@@ -567,6 +761,7 @@ pub mod f16 {
     #[cfg(target_arch = "aarch64")]
     mod neon {
         use super::*;
+        use gemm_common::simd::MixedSimd;
         use gemm_f32::microkernel::neon::f32::*;
         const N: usize = 4;
 
@@ -592,7 +787,8 @@ pub mod f16 {
             _conj_rhs: bool,
             parallelism: gemm_common::Parallelism,
         ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N, _>(
+                gemm_common::simd::Neon::try_new().unwrap(),
                 m,
                 n,
                 k,
@@ -614,11 +810,11 @@ pub mod f16 {
         }
     }
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    mod sse {
-        use super::*;
-        use gemm_f32::microkernel::sse::f32::*;
-        const N: usize = 4;
+    #[cfg(target_arch = "aarch64")]
+    mod neonfp16 {
+        use crate::microkernel::neonfp16::f16::*;
+        use gemm_common::simd::{MixedSimd, NeonFp16};
+        type T = half::f16;
 
         #[inline(never)]
         pub unsafe fn gemm_basic(
@@ -642,7 +838,10 @@ pub mod f16 {
             _conj_rhs: bool,
             parallelism: gemm_common::Parallelism,
         ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            let simd = <NeonFp16 as MixedSimd<T, T, T, T>>::try_new().unwrap();
+
+            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                simd,
                 m,
                 n,
                 k,
@@ -658,56 +857,10 @@ pub mod f16 {
                 rhs_rs,
                 alpha,
                 beta,
-                &UKR,
-                parallelism,
-            );
-        }
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    mod avx {
-        use super::*;
-        use gemm_f32::microkernel::avx::f32::*;
-        const N: usize = 8;
-
-        #[inline(never)]
-        pub unsafe fn gemm_basic(
-            m: usize,
-            n: usize,
-            k: usize,
-            dst: *mut T,
-            dst_cs: isize,
-            dst_rs: isize,
-            read_dst: bool,
-            lhs: *const T,
-            lhs_cs: isize,
-            lhs_rs: isize,
-            rhs: *const T,
-            rhs_cs: isize,
-            rhs_rs: isize,
-            alpha: T,
-            beta: T,
-            _conj_dst: bool,
-            _conj_lhs: bool,
-            _conj_rhs: bool,
-            parallelism: gemm_common::Parallelism,
-        ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
-                m,
-                n,
-                k,
-                dst,
-                dst_cs,
-                dst_rs,
-                read_dst,
-                lhs,
-                lhs_cs,
-                lhs_rs,
-                rhs,
-                rhs_cs,
-                rhs_rs,
-                alpha,
-                beta,
+                false,
+                false,
+                false,
+                move |a, b, c| <NeonFp16 as MixedSimd<T, T, T, T>>::mult_add(simd, a, b, c),
                 &UKR,
                 parallelism,
             );
@@ -717,6 +870,7 @@ pub mod f16 {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     mod fma {
         use super::*;
+        use gemm_common::simd::V3;
         use gemm_f32::microkernel::fma::f32::*;
         const N: usize = 8;
 
@@ -742,7 +896,8 @@ pub mod f16 {
             _conj_rhs: bool,
             parallelism: gemm_common::Parallelism,
         ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N, _>(
+                V3::try_new().unwrap(),
                 m,
                 n,
                 k,
@@ -767,6 +922,7 @@ pub mod f16 {
     #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
     mod avx512f {
         use super::*;
+        use gemm_common::simd::V4;
         use gemm_f32::microkernel::avx512f::f32::*;
         const N: usize = 16;
 
@@ -792,7 +948,8 @@ pub mod f16 {
             _conj_rhs: bool,
             parallelism: gemm_common::Parallelism,
         ) {
-            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_basic_generic::<N, { MR_DIV_N * N }, NR, MR_DIV_N, _>(
+                V4::try_new().unwrap(),
                 m,
                 n,
                 k,
