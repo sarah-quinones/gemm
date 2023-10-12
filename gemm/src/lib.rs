@@ -26,6 +26,7 @@ mod tests {
     #[test]
     fn test_gemm_f16() {
         let mut mnks = vec![];
+        mnks.push((4, 4, 4));
         mnks.push((63, 2, 10));
         mnks.push((16, 2, 1));
         mnks.push((0, 0, 4));
@@ -46,7 +47,6 @@ mod tests {
         mnks.push((8, 16, 1));
         mnks.push((16, 8, 1));
         mnks.push((1, 1, 2));
-        mnks.push((4, 4, 4));
         mnks.push((1024, 1024, 1));
         mnks.push((1024, 1024, 4));
         mnks.push((63, 1, 10));

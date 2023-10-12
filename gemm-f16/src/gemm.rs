@@ -39,14 +39,11 @@ unsafe fn pack_generic_inner_loop<
 
                 if src_width == 4 {
                     for _ in 0..k {
-                        {
-                            let dst = dst as *mut [f32; 4];
-                            *dst = half_simd.simd_from_dst(*(src as *const [T; 4]));
-                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
-                                dst.add(src_width) as _,
-                                DST_WIDTH - src_width,
-                            ));
-                        }
+                        *(dst as *mut [f32; 4]) = half_simd.simd_from_dst(*(src as *const [T; 4]));
+                        quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                            dst.add(src_width) as _,
+                            DST_WIDTH - src_width,
+                        ));
                         src = src.wrapping_offset(src_cs);
                         dst = dst.add(DST_WIDTH);
                     }
@@ -56,22 +53,20 @@ unsafe fn pack_generic_inner_loop<
 
             #[cfg(feature = "nightly")]
             if id == TypeId::of::<V4>() {
+                let quarter_simd = V3Half::try_new().unwrap();
                 let half_simd = V3::try_new().unwrap_unchecked();
-                let quarter_simd = V3Half::try_new().unwrap_unchecked();
 
                 if src_width == 4 {
                     for _ in 0..k {
-                        {
-                            let dst = dst as *mut [f32; 4];
-                            *dst = <V3Half as MixedSimd<T, T, T, f32>>::simd_from_dst(
+                        *(dst as *mut [f32; 4]) =
+                            <V3Half as MixedSimd<T, T, T, f32>>::simd_from_dst(
                                 quarter_simd,
                                 *(src as *const [T; 4]),
                             );
-                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
-                                dst.add(src_width) as _,
-                                DST_WIDTH - src_width,
-                            ));
-                        }
+                        quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                            dst.add(src_width) as _,
+                            DST_WIDTH - src_width,
+                        ));
                         src = src.wrapping_offset(src_cs);
                         dst = dst.add(DST_WIDTH);
                     }
@@ -80,17 +75,14 @@ unsafe fn pack_generic_inner_loop<
 
                 if src_width == 8 {
                     for _ in 0..k {
-                        {
-                            let dst = dst as *mut [f32; 8];
-                            *dst = <V3 as MixedSimd<T, T, T, f32>>::simd_from_dst(
-                                half_simd,
-                                *(src as *const [T; 8]),
-                            );
-                            quick_zero::<f32>(core::slice::from_raw_parts_mut(
-                                dst.add(src_width) as _,
-                                DST_WIDTH - src_width,
-                            ));
-                        }
+                        *(dst as *mut [f32; 8]) = <V3 as MixedSimd<T, T, T, f32>>::simd_from_dst(
+                            half_simd,
+                            *(src as *const [T; 8]),
+                        );
+                        quick_zero::<f32>(core::slice::from_raw_parts_mut(
+                            dst.add(src_width) as _,
+                            DST_WIDTH - src_width,
+                        ));
                         src = src.wrapping_offset(src_cs);
                         dst = dst.add(DST_WIDTH);
                     }
@@ -99,33 +91,9 @@ unsafe fn pack_generic_inner_loop<
             }
         }
 
-        if src_width == N {
+        if src_width % N == 0 {
             for _ in 0..k {
-                for j in 0..1 {
-                    let j = j * N;
-                    let dst = dst.add(j) as *mut S::AccN;
-                    *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
-                }
-                src = src.wrapping_offset(src_cs);
-                dst = dst.add(DST_WIDTH);
-            }
-            return;
-        }
-        if src_width == 2 * N {
-            for _ in 0..k {
-                for j in 0..2 {
-                    let j = j * N;
-                    let dst = dst.add(j) as *mut S::AccN;
-                    *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
-                }
-                src = src.wrapping_offset(src_cs);
-                dst = dst.add(DST_WIDTH);
-            }
-            return;
-        }
-        if src_width == 3 * N {
-            for _ in 0..k {
-                for j in 0..3 {
+                for j in 0..src_width / N {
                     let j = j * N;
                     let dst = dst.add(j) as *mut S::AccN;
                     *dst = simd.simd_from_dst(*(src.offset(j as isize * src_rs) as *const S::DstN));
