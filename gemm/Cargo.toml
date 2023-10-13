@@ -17,12 +17,12 @@ num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
 paste = { workspace = true }
 
-gemm-common = { version = "0.16.5", path = "../gemm-common", default-features = false }
-gemm-f16 = { version = "0.16.5", path = "../gemm-f16", default-features = false }
-gemm-f32 = { version = "0.16.5", path = "../gemm-f32", default-features = false }
-gemm-f64 = { version = "0.16.5", path = "../gemm-f64", default-features = false }
-gemm-c32 = { version = "0.16.5", path = "../gemm-c32", default-features = false }
-gemm-c64 = { version = "0.16.5", path = "../gemm-c64", default-features = false }
+gemm-common = { version = "0.16.6", path = "../gemm-common", default-features = false }
+gemm-f16 = { version = "0.16.6", path = "../gemm-f16", default-features = false }
+gemm-f32 = { version = "0.16.6", path = "../gemm-f32", default-features = false }
+gemm-f64 = { version = "0.16.6", path = "../gemm-f64", default-features = false }
+gemm-c32 = { version = "0.16.6", path = "../gemm-c32", default-features = false }
+gemm-c64 = { version = "0.16.6", path = "../gemm-c64", default-features = false }
 
 [features]
 default = ["std", "rayon"]
