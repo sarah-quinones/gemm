@@ -3,7 +3,7 @@ members = ["gemm", "gemm-common", "gemm-f16", "gemm-f32", "gemm-f64", "gemm-c32"
 resolver = "2"
 
 [workspace.dependencies]
-lazy_static = "1.4"
+once_cell = { version = "1.18", default-features = false }
 seq-macro = "0.3"
 paste = "1.0"
 raw-cpuid = { version = "10.7", default-features = false }

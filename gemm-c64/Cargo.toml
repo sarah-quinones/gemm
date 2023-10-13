@@ -10,7 +10,6 @@ license = "MIT"
 keywords = ["linear-algebra"]
 
 [dependencies]
-lazy_static = { workspace = true }
 raw-cpuid = { workspace = true }
 seq-macro = { workspace = true }
 dyn-stack = { workspace = true, default-features = false }

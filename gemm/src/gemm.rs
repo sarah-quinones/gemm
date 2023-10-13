@@ -30,7 +30,7 @@ unsafe fn gemm_dispatch<T: 'static>(
     parallelism: Parallelism,
 ) {
     if TypeId::of::<T>() == TypeId::of::<f64>() {
-        gemm_f64::gemm::f64::GEMM(
+        gemm_f64::gemm::f64::get_gemm_fn()(
             m,
             n,
             k,
@@ -52,7 +52,7 @@ unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f32>() {
-        gemm_f32::gemm::f32::GEMM(
+        gemm_f32::gemm::f32::get_gemm_fn()(
             m,
             n,
             k,
@@ -74,7 +74,7 @@ unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<f16>() {
-        gemm_f16::gemm::f16::GEMM(
+        gemm_f16::gemm::f16::get_gemm_fn()(
             m,
             n,
             k,
@@ -96,7 +96,7 @@ unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<c64>() {
-        gemm_c64::gemm::f64::GEMM_CPLX(
+        gemm_c64::gemm::f64::get_gemm_fn()(
             m,
             n,
             k,
@@ -118,7 +118,7 @@ unsafe fn gemm_dispatch<T: 'static>(
             parallelism,
         )
     } else if TypeId::of::<T>() == TypeId::of::<c32>() {
-        gemm_c32::gemm::f32::GEMM_CPLX(
+        gemm_c32::gemm::f32::get_gemm_fn()(
             m,
             n,
             k,

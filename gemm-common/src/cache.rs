@@ -1,5 +1,3 @@
-use lazy_static::lazy_static;
-
 #[derive(Default, Debug, Copy, Clone)]
 pub struct CacheInfo {
     pub small_mc: bool,
@@ -186,9 +184,30 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
     },
 ];
 
-lazy_static! {
-    pub static ref CACHE_INFO: [CacheInfo; 3] = cache_info().unwrap_or(CACHE_INFO_DEFAULT);
+pub struct CacheInfoDeref;
+
+impl core::ops::Deref for CacheInfoDeref {
+    type Target = [CacheInfo; 3];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        #[cfg(not(feature = "std"))]
+        {
+            static CACHE_INFO: once_cell::race::OnceBox<[CacheInfo; 3]> =
+                once_cell::race::OnceBox::new();
+            CACHE_INFO
+                .get_or_init(|| alloc::boxed::Box::new(cache_info().unwrap_or(CACHE_INFO_DEFAULT)))
+        }
+        #[cfg(feature = "std")]
+        {
+            static CACHE_INFO: once_cell::sync::OnceCell<[CacheInfo; 3]> =
+                once_cell::sync::OnceCell::new();
+            CACHE_INFO.get_or_init(|| cache_info().unwrap_or(CACHE_INFO_DEFAULT))
+        }
+    }
 }
+
+pub static CACHE_INFO: CacheInfoDeref = CacheInfoDeref;
 
 #[inline]
 fn gcd(mut a: usize, mut b: usize) -> usize {

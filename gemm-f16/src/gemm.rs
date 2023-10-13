@@ -826,8 +826,23 @@ pub mod f16 {
         }
     }
 
-    lazy_static::lazy_static! {
-        pub static ref GEMM: GemmTy = init_gemm_fn();
+    static GEMM_PTR: ::core::sync::atomic::AtomicPtr<()> =
+        ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
+
+    #[inline(never)]
+    fn init_gemm_ptr() -> GemmTy {
+        let gemm_fn = init_gemm_fn();
+        GEMM_PTR.store(gemm_fn as *mut (), ::core::sync::atomic::Ordering::Relaxed);
+        gemm_fn
+    }
+
+    #[inline(always)]
+    pub fn get_gemm_fn() -> GemmTy {
+        let mut gemm_fn = GEMM_PTR.load(::core::sync::atomic::Ordering::Relaxed);
+        if gemm_fn.is_null() {
+            gemm_fn = init_gemm_ptr() as *mut ();
+        }
+        unsafe { ::core::mem::transmute(gemm_fn) }
     }
 
     mod scalar {

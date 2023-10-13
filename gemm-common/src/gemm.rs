@@ -884,6 +884,7 @@ macro_rules! gemm_def {
             $crate::Parallelism,
         );
 
+        #[inline]
         fn init_gemm_fn() -> GemmTy {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
@@ -927,8 +928,23 @@ macro_rules! gemm_def {
             }
         }
 
-        lazy_static::lazy_static! {
-            pub static ref GEMM: GemmTy = init_gemm_fn();
+        static GEMM_PTR: ::core::sync::atomic::AtomicPtr<()> =
+            ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
+
+        #[inline(never)]
+        fn init_gemm_ptr() -> GemmTy {
+            let gemm_fn = init_gemm_fn();
+            GEMM_PTR.store(gemm_fn as *mut (), ::core::sync::atomic::Ordering::Relaxed);
+            gemm_fn
+        }
+
+        #[inline(always)]
+        pub fn get_gemm_fn() -> GemmTy {
+            let mut gemm_fn = GEMM_PTR.load(::core::sync::atomic::Ordering::Relaxed);
+            if gemm_fn.is_null() {
+                gemm_fn = init_gemm_ptr() as *mut ();
+            }
+            unsafe { ::core::mem::transmute(gemm_fn) }
         }
 
         $crate::__inject_mod!(scalar, $ty, 1, Scalar);
@@ -986,8 +1002,23 @@ macro_rules! gemm_cplx_def {
             scalar_cplx::gemm_basic_cplx
         }
 
-        lazy_static::lazy_static! {
-            pub static ref GEMM_CPLX: GemmCplxTy = init_gemm_cplx_fn();
+        static GEMM_PTR: ::core::sync::atomic::AtomicPtr<()> =
+            ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
+
+        #[inline(never)]
+        fn init_gemm_ptr() -> GemmCplxTy {
+            let gemm_fn = init_gemm_cplx_fn();
+            GEMM_PTR.store(gemm_fn as *mut (), ::core::sync::atomic::Ordering::Relaxed);
+            gemm_fn
+        }
+
+        #[inline(always)]
+        pub fn get_gemm_fn() -> GemmCplxTy {
+            let mut gemm_fn = GEMM_PTR.load(::core::sync::atomic::Ordering::Relaxed);
+            if gemm_fn.is_null() {
+                gemm_fn = init_gemm_ptr() as *mut ();
+            }
+            unsafe { ::core::mem::transmute(gemm_fn) }
         }
 
         $crate::__inject_mod_cplx!(scalar, $ty, 1, Scalar);
