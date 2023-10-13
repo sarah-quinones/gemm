@@ -13,9 +13,9 @@ keywords = ["linear-algebra"]
 lazy_static = { workspace = true }
 raw-cpuid = { workspace = true }
 seq-macro = { workspace = true }
-dyn-stack = { workspace = true }
-num-traits = { workspace = true }
-num-complex = { workspace = true }
+dyn-stack = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }
+num-complex = { workspace = true, default-features = false }
 rayon = { workspace = true, optional = true }
 paste = { workspace = true }
 pulp = { version = "0.15.0", default-features = false }
@@ -24,7 +24,7 @@ half = { workspace = true }
 
 [features]
 default = ["std", "rayon"]
-std = ["pulp/std"]
+std = ["pulp/std", "dyn-stack/std"]
 nightly = ["pulp/nightly"]
 wasm-simd128-enable = []
 rayon = ["dep:rayon", "std"]

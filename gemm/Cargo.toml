@@ -13,9 +13,9 @@ keywords = ["linear-algebra"]
 lazy_static = { workspace = true }
 raw-cpuid = { workspace = true }
 seq-macro = { workspace = true }
-dyn-stack = { workspace = true }
-num-traits = { workspace = true }
-num-complex = { workspace = true }
+dyn-stack = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }
+num-complex = { workspace = true, default-features = false }
 paste = { workspace = true }
 
 gemm-common = { version = "0.16.1", path = "../gemm-common", default-features = false }
@@ -28,6 +28,7 @@ gemm-c64 = { version = "0.16.1", path = "../gemm-c64", default-features = false 
 [features]
 default = ["std"]
 std = [
+  "dyn-stack/std",
   "gemm-common/std",
   "gemm-f32/std",
   "gemm-f64/std",

@@ -4,13 +4,13 @@ resolver = "2"
 
 [workspace.dependencies]
 lazy_static = "1.4"
-raw-cpuid = "10.7"
 seq-macro = "0.3"
-dyn-stack = "0.9"
-num-traits = "0.2"
-num-complex = "0.4"
-rayon = "1.7"
 paste = "1.0"
+raw-cpuid = { version = "10.7", default-features = false }
+dyn-stack = { version = "0.9", default-features = false }
+num-traits = { version = "0.2", default-features = false }
+num-complex = { version = "0.4", default-features = false }
+rayon = "1.7"
 half = { version = "2.3", features = ["num-traits", "bytemuck"] }
 
 [profile.dev]
