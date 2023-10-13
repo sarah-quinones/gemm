@@ -101,7 +101,7 @@ pub mod fma {
 
         #[inline(always)]
         pub unsafe fn scalar_mul_add(a: T, b: T, c: T) -> T {
-            T::mul_add(a, b, c)
+            gemm_common::simd::v3_fmaf(a, b, c)
         }
 
         microkernel!(["fma"], 2, x1x1, 1, 1);
@@ -172,7 +172,7 @@ pub mod avx512f {
 
         #[inline(always)]
         pub unsafe fn scalar_mul_add(a: T, b: T, c: T) -> T {
-            T::mul_add(a, b, c)
+            gemm_common::simd::v3_fmaf(a, b, c)
         }
 
         microkernel!(["avx512f"], 4, x1x1, 1, 1);
@@ -267,7 +267,7 @@ pub mod neon {
 
         #[inline(always)]
         pub unsafe fn scalar_mul_add(a: T, b: T, c: T) -> T {
-            T::mul_add(a, b, c)
+            gemm_common::simd::neon_fmaf(a, b, c)
         }
 
         microkernel!(["neon"], 2, x1x1, 1, 1);

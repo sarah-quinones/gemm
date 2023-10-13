@@ -502,6 +502,18 @@ mod x86 {
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
 
+    #[inline(always)]
+    pub unsafe fn v3_fmaf(a: f32, b: f32, c: f32) -> f32 {
+        use pulp::Simd;
+        pulp::x86::V3::new_unchecked().f32_scalar_mul_add(a, b, c)
+    }
+
+    #[inline(always)]
+    pub unsafe fn v3_fma(a: f64, b: f64, c: f64) -> f64 {
+        use pulp::Simd;
+        pulp::x86::V3::new_unchecked().f64_scalar_mul_add(a, b, c)
+    }
+
     #[derive(Copy, Clone)]
     pub struct Sse;
     #[derive(Copy, Clone)]
@@ -612,7 +624,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { v3_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -706,7 +718,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { v3_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1270,7 +1282,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { v3_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1364,7 +1376,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f64, rhs: f64, acc: f64) -> f64 {
-            f64::mul_add(lhs, rhs, acc)
+            unsafe { v3_fma(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1474,7 +1486,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { v3_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1576,7 +1588,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { v3_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1674,7 +1686,7 @@ mod x86 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f64, rhs: f64, acc: f64) -> f64 {
-            f64::mul_add(lhs, rhs, acc)
+            unsafe { v3_fma(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -1760,6 +1772,30 @@ pub mod aarch64 {
     use core::mem::transmute;
     use core::mem::MaybeUninit;
     use core::ptr;
+
+    #[inline(always)]
+    pub unsafe fn neon_fmaf(a: f32, b: f32, c: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            f32::mul_add(a, b, c)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            a * b + c
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn neon_fma(a: f64, b: f64, c: f64) -> f64 {
+        #[cfg(feature = "std")]
+        {
+            f64::mul_add(a, b, c)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            a * b + c
+        }
+    }
 
     #[target_feature(enable = "fp16,neon")]
     #[inline]
@@ -2004,7 +2040,7 @@ pub mod aarch64 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { neon_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]
@@ -2212,7 +2248,7 @@ pub mod aarch64 {
 
         #[inline(always)]
         fn mult_add(self, lhs: f32, rhs: f32, acc: f32) -> f32 {
-            f32::mul_add(lhs, rhs, acc)
+            unsafe { neon_fmaf(lhs, rhs, acc) }
         }
 
         #[inline(always)]

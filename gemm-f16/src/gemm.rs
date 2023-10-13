@@ -1,5 +1,3 @@
-use core::any::TypeId;
-
 use dyn_stack::{DynStack, GlobalMemBuffer, StackReq};
 #[cfg(feature = "std")]
 use gemm_common::gemm::L2_SLAB;
@@ -17,6 +15,7 @@ use gemm_common::{
 };
 type T = half::f16;
 
+#[allow(unused_imports)]
 use gemm_common::simd::*;
 
 #[inline(always)]
@@ -38,6 +37,8 @@ unsafe fn pack_generic_inner_loop<
     if src_rs == 1 {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
+            use core::any::TypeId;
+
             let id = TypeId::of::<S>();
             if id == TypeId::of::<V3>() {
                 let half_simd = V3Half::try_new().unwrap();
