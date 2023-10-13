@@ -191,54 +191,57 @@ mod tests {
                     for beta in [0.0, 1.0, 2.3] {
                         #[cfg(feature = "std")]
                         dbg!(alpha, beta, parallelism);
-                        let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
-                        let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
-                        let mut c_vec: Vec<f64> = (0..(m * n)).map(|_| rand::random()).collect();
-                        let mut d_vec = c_vec.clone();
+                        for colmajor in [true, false] {
+                            let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
+                            let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
+                            let mut c_vec: Vec<f64> =
+                                (0..(m * n)).map(|_| rand::random()).collect();
+                            let mut d_vec = c_vec.clone();
 
-                        unsafe {
-                            gemm::gemm(
-                                m,
-                                n,
-                                k,
-                                c_vec.as_mut_ptr(),
-                                m as isize,
-                                1,
-                                true,
-                                a_vec.as_ptr(),
-                                m as isize,
-                                1,
-                                b_vec.as_ptr(),
-                                k as isize,
-                                1,
-                                alpha,
-                                beta,
-                                false,
-                                false,
-                                false,
-                                parallelism,
-                            );
+                            unsafe {
+                                gemm::gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    if colmajor { m } else { 1 } as isize,
+                                    if colmajor { 1 } else { n } as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                    false,
+                                    false,
+                                    false,
+                                    parallelism,
+                                );
 
-                            gemm::gemm_fallback(
-                                m,
-                                n,
-                                k,
-                                d_vec.as_mut_ptr(),
-                                m as isize,
-                                1,
-                                true,
-                                a_vec.as_ptr(),
-                                m as isize,
-                                1,
-                                b_vec.as_ptr(),
-                                k as isize,
-                                1,
-                                alpha,
-                                beta,
-                            );
-                        }
-                        for (c, d) in c_vec.iter().zip(d_vec.iter()) {
-                            assert_approx_eq::assert_approx_eq!(c, d);
+                                gemm::gemm_fallback(
+                                    m,
+                                    n,
+                                    k,
+                                    d_vec.as_mut_ptr(),
+                                    if colmajor { m } else { 1 } as isize,
+                                    if colmajor { 1 } else { n } as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                );
+                            }
+                            for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                                assert_approx_eq::assert_approx_eq!(c, d);
+                            }
                         }
                     }
                 }
@@ -300,63 +303,65 @@ mod tests {
                                 dbg!(conj_lhs);
                                 #[cfg(feature = "std")]
                                 dbg!(conj_rhs);
-                                let a_vec: Vec<f64> =
-                                    (0..(2 * m * k)).map(|_| rand::random()).collect();
-                                let b_vec: Vec<f64> =
-                                    (0..(2 * k * n)).map(|_| rand::random()).collect();
-                                let mut c_vec: Vec<f64> =
-                                    (0..(2 * m * n)).map(|_| rand::random()).collect();
-                                let mut d_vec = c_vec.clone();
+                                for colmajor in [false, false] {
+                                    let a_vec: Vec<f64> =
+                                        (0..(2 * m * k)).map(|_| rand::random()).collect();
+                                    let b_vec: Vec<f64> =
+                                        (0..(2 * k * n)).map(|_| rand::random()).collect();
+                                    let mut c_vec: Vec<f64> =
+                                        (0..(2 * m * n)).map(|_| rand::random()).collect();
+                                    let mut d_vec = c_vec.clone();
 
-                                unsafe {
-                                    gemm::gemm(
-                                        m,
-                                        n,
-                                        k,
-                                        c_vec.as_mut_ptr() as *mut c64,
-                                        m as isize,
-                                        1,
-                                        true,
-                                        a_vec.as_ptr() as *const c64,
-                                        m as isize,
-                                        1,
-                                        b_vec.as_ptr() as *const c64,
-                                        k as isize,
-                                        1,
-                                        alpha,
-                                        beta,
-                                        conj_dst,
-                                        conj_lhs,
-                                        conj_rhs,
-                                        #[cfg(feature = "rayon")]
-                                        Parallelism::Rayon(0),
-                                        #[cfg(not(feature = "rayon"))]
-                                        Parallelism::None,
-                                    );
+                                    unsafe {
+                                        gemm::gemm(
+                                            m,
+                                            n,
+                                            k,
+                                            c_vec.as_mut_ptr() as *mut c64,
+                                            if colmajor { m } else { 1 } as isize,
+                                            if colmajor { 1 } else { n } as isize,
+                                            true,
+                                            a_vec.as_ptr() as *const c64,
+                                            m as isize,
+                                            1,
+                                            b_vec.as_ptr() as *const c64,
+                                            k as isize,
+                                            1,
+                                            alpha,
+                                            beta,
+                                            conj_dst,
+                                            conj_lhs,
+                                            conj_rhs,
+                                            #[cfg(feature = "rayon")]
+                                            Parallelism::Rayon(0),
+                                            #[cfg(not(feature = "rayon"))]
+                                            Parallelism::None,
+                                        );
 
-                                    gemm::gemm_cplx_fallback(
-                                        m,
-                                        n,
-                                        k,
-                                        d_vec.as_mut_ptr() as *mut c64,
-                                        m as isize,
-                                        1,
-                                        true,
-                                        a_vec.as_ptr() as *const c64,
-                                        m as isize,
-                                        1,
-                                        b_vec.as_ptr() as *const c64,
-                                        k as isize,
-                                        1,
-                                        alpha,
-                                        beta,
-                                        conj_dst,
-                                        conj_lhs,
-                                        conj_rhs,
-                                    );
-                                }
-                                for (c, d) in c_vec.iter().zip(d_vec.iter()) {
-                                    assert_approx_eq::assert_approx_eq!(c, d);
+                                        gemm::gemm_cplx_fallback(
+                                            m,
+                                            n,
+                                            k,
+                                            d_vec.as_mut_ptr() as *mut c64,
+                                            if colmajor { m } else { 1 } as isize,
+                                            if colmajor { 1 } else { n } as isize,
+                                            true,
+                                            a_vec.as_ptr() as *const c64,
+                                            m as isize,
+                                            1,
+                                            b_vec.as_ptr() as *const c64,
+                                            k as isize,
+                                            1,
+                                            alpha,
+                                            beta,
+                                            conj_dst,
+                                            conj_lhs,
+                                            conj_rhs,
+                                        );
+                                    }
+                                    for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                                        assert_approx_eq::assert_approx_eq!(c, d);
+                                    }
                                 }
                             }
                         }

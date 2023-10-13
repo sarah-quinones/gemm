@@ -604,10 +604,9 @@ pub unsafe fn gemm_basic_generic<
                             let row_inner = MR * i;
                             let m_chunk_inner = MR.min(m_chunk - row_inner);
 
-                            let inner_idx = &mut i;
                             if job_id < job_start || job_id >= job_end {
                                 job_id += 1;
-                                *inner_idx += 1;
+                                i += 1;
                                 continue;
                             }
                             job_id += 1;
@@ -642,8 +641,12 @@ pub unsafe fn gemm_basic_generic<
                                 n_chunk_inner,
                                 k_chunk,
                                 dst.0,
-                                if do_pack_lhs || do_prepack_lhs {
+                                if do_pack_lhs {
                                     packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                } else if do_prepack_lhs {
+                                    packed_lhs
+                                        .wrapping_add((i + row_outer / MR) * packed_lhs_stride)
+                                        .0
                                 } else {
                                     lhs.wrapping_offset(
                                         (row_outer + row_inner) as isize * lhs_rs
