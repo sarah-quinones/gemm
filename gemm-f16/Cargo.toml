@@ -21,7 +21,7 @@ rayon = { workspace =true, optional = true }
 
 gemm-common = { version = "0.16.1", default-features = false, path = "../gemm-common" }
 gemm-f32 = { version = "0.16.1", default-features = false, path = "../gemm-f32" }
-half = { workspace = true }
+half = { workspace = true, default-features = false }
 
 [features]
 default = ["std", "rayon"]

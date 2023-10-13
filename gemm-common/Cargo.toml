@@ -16,11 +16,11 @@ seq-macro = { workspace = true }
 dyn-stack = { workspace = true, default-features = false }
 num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
+half = { workspace = true, default-features = false }
 rayon = { workspace = true, optional = true }
 paste = { workspace = true }
 pulp = { version = "0.16", default-features = false }
 bytemuck = "1.14"
-half = { workspace = true }
 
 [features]
 default = ["std", "rayon"]
