@@ -18,8 +18,8 @@ num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
 rayon = { workspace = true, optional = true }
 paste = { workspace = true }
-pulp = { version = "0.15.0", default-features = false }
-bytemuck = "1.14.0"
+pulp = { version = "0.16", default-features = false }
+bytemuck = "1.14"
 half = { workspace = true }
 
 [features]
