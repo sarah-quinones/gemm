@@ -648,7 +648,9 @@ pub unsafe fn gemm_basic_generic<
                                 k_chunk,
                                 tmp.as_mut_ptr() as *mut f32,
                                 if do_prepack_lhs {
-                                    prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
+                                    packed_lhs
+                                        .wrapping_add((i + row_outer / MR) * packed_lhs_stride)
+                                        .0
                                 } else {
                                     packed_lhs.wrapping_add(i * packed_lhs_stride).0
                                 },

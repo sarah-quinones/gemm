@@ -69,66 +69,69 @@ mod tests {
                     for beta in [0.0, 1.0, 2.3] {
                         #[cfg(feature = "std")]
                         dbg!(alpha, beta, parallelism);
-                        let alpha = f16::from_f32(alpha);
-                        let beta = f16::from_f32(beta);
-                        let a_vec: Vec<f16> = (0..(m * k))
-                            .map(|_| f16::from_f32(rand::random()))
-                            .collect();
-                        let b_vec: Vec<f16> = (0..(k * n))
-                            .map(|_| f16::from_f32(rand::random()))
-                            .collect();
-                        let mut c_vec: Vec<f16> = (0..(m * n))
-                            .map(|_| f16::from_f32(rand::random()))
-                            .collect();
-                        let mut d_vec = c_vec.clone();
 
-                        unsafe {
-                            gemm::gemm(
-                                m,
-                                n,
-                                k,
-                                c_vec.as_mut_ptr(),
-                                m as isize,
-                                1,
-                                true,
-                                a_vec.as_ptr(),
-                                m as isize,
-                                1,
-                                b_vec.as_ptr(),
-                                k as isize,
-                                1,
-                                alpha,
-                                beta,
-                                false,
-                                false,
-                                false,
-                                parallelism,
-                            );
+                        for colmajor in [true, false] {
+                            let alpha = f16::from_f32(alpha);
+                            let beta = f16::from_f32(beta);
+                            let a_vec: Vec<f16> = (0..(m * k))
+                                .map(|_| f16::from_f32(rand::random()))
+                                .collect();
+                            let b_vec: Vec<f16> = (0..(k * n))
+                                .map(|_| f16::from_f32(rand::random()))
+                                .collect();
+                            let mut c_vec: Vec<f16> = (0..(m * n))
+                                .map(|_| f16::from_f32(rand::random()))
+                                .collect();
+                            let mut d_vec = c_vec.clone();
 
-                            gemm::gemm_fallback(
-                                m,
-                                n,
-                                k,
-                                d_vec.as_mut_ptr(),
-                                m as isize,
-                                1,
-                                true,
-                                a_vec.as_ptr(),
-                                m as isize,
-                                1,
-                                b_vec.as_ptr(),
-                                k as isize,
-                                1,
-                                alpha,
-                                beta,
-                            );
-                        }
-                        let eps = f16::from_f32(1e-1);
-                        for (c, d) in c_vec.iter().zip(d_vec.iter()) {
-                            let eps_rel = c.abs() * eps;
-                            let eps_abs = eps;
-                            let eps = if eps_rel > eps_abs { eps_rel } else { eps_abs };
-                            assert_approx_eq::assert_approx_eq!(c, d, eps);
+                            unsafe {
+                                gemm::gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    m as isize,
+                                    1,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                    false,
+                                    false,
+                                    false,
+                                    parallelism,
+                                );
+
+                                gemm::gemm_fallback(
+                                    m,
+                                    n,
+                                    k,
+                                    d_vec.as_mut_ptr(),
+                                    m as isize,
+                                    1,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                );
+                            }
+                            let eps = f16::from_f32(1e-1);
+                            for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                                let eps_rel = c.abs() * eps;
+                                let eps_abs = eps;
+                                let eps = if eps_rel > eps_abs { eps_rel } else { eps_abs };
+                                assert_approx_eq::assert_approx_eq!(c, d, eps);
+                            }
                         }
                     }
                 }
