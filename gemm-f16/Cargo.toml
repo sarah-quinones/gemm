@@ -18,8 +18,8 @@ num-complex = { workspace = true, default-features = false }
 paste = { workspace = true }
 rayon = { workspace =true, optional = true }
 
-gemm-common = { version = "0.16.3", default-features = false, path = "../gemm-common" }
-gemm-f32 = { version = "0.16.3", default-features = false, path = "../gemm-f32" }
+gemm-common = { version = "0.16.4", default-features = false, path = "../gemm-common" }
+gemm-f32 = { version = "0.16.4", default-features = false, path = "../gemm-f32" }
 half = { workspace = true, default-features = false }
 
 [features]
