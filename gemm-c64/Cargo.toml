@@ -16,12 +16,12 @@ seq-macro = { workspace = true }
 dyn-stack = { workspace = true }
 num-traits = { workspace = true }
 num-complex = { workspace = true }
-rayon = { workspace = true }
 paste = { workspace = true }
 
-gemm-common = { version = "0.16.0", path = "../gemm-common" }
+gemm-common = { version = "0.16.1", default-features = false, path = "../gemm-common" }
 
 [features]
-default = ["std"]
-std = []
+default = ["std", "rayon"]
+std = ["gemm-common/std"]
 nightly = ["gemm-common/nightly"]
+rayon = ["std", "gemm-common/rayon"]

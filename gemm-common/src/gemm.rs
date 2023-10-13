@@ -1,12 +1,11 @@
 use crate::{
-    cache::{div_ceil, kernel_params, KernelParams, CACHE_INFO},
+    cache::{kernel_params, KernelParams, CACHE_INFO},
     gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::{pack_lhs, pack_rhs},
     simd::MixedSimd,
     Parallelism, Ptr,
 };
-use core::cell::RefCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
@@ -56,8 +55,9 @@ pub const CACHELINE_ALIGN: usize = {
     }
 };
 
+#[cfg(feature = "std")]
 thread_local! {
-    pub static L2_SLAB: RefCell<GlobalMemBuffer> = RefCell::new(GlobalMemBuffer::new(
+    pub static L2_SLAB: core::cell::RefCell<GlobalMemBuffer> = core::cell::RefCell::new(GlobalMemBuffer::new(
         StackReq::new_aligned::<u8>(CACHE_INFO[1].cache_bytes, CACHELINE_ALIGN)
     ));
 }
@@ -153,6 +153,7 @@ pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
     LHS_PACKING_THRESHOLD_MULTI_THREAD.store(value.min(256), Ordering::Relaxed);
 }
 
+#[cfg(feature = "rayon")]
 pub fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
     fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
         use rayon::prelude::*;
@@ -293,7 +294,7 @@ pub unsafe fn gemm_basic_generic<
         KernelParams {
             kc,
             mc,
-            nc: div_ceil(n, NR) * NR,
+            nc: n.next_multiple_of(NR),
         }
     } else {
         kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>())
@@ -303,7 +304,8 @@ pub unsafe fn gemm_basic_generic<
     } else {
         match parallelism {
             Parallelism::None => 128 * NR,
-            Parallelism::Rayon(_) => div_ceil(n, NR) * NR,
+            #[cfg(feature = "rayon")]
+            Parallelism::Rayon(_) => n.next_multiple_of(NR),
         }
     };
 
@@ -316,6 +318,19 @@ pub unsafe fn gemm_basic_generic<
     let lhs = Ptr(lhs as *mut T);
     let rhs = Ptr(rhs as *mut T);
 
+    #[cfg(feature = "rayon")]
+    let max_threads = match parallelism {
+        Parallelism::None => 1,
+        Parallelism::Rayon(n_threads) => {
+            if n_threads == 0 {
+                rayon::current_num_threads()
+            } else {
+                n_threads
+            }
+        }
+    };
+
+    #[cfg(feature = "rayon")]
     let threading_threshold = get_threading_threshold();
 
     #[cfg(target_arch = "aarch64")]
@@ -348,6 +363,12 @@ pub unsafe fn gemm_basic_generic<
     } else {
         None
     };
+
+    #[cfg(not(feature = "std"))]
+    let mut l2_slab = GlobalMemBuffer::new(StackReq::new_aligned::<T>(
+        packed_lhs_stride * (mc / MR),
+        simd_align,
+    ));
 
     let mut packed_storage = mem.as_mut().map(|mem| {
         let stack = DynStack::new(mem);
@@ -391,19 +412,8 @@ pub unsafe fn gemm_basic_generic<
     let packed_rhs_rs = if do_pack_rhs { NR as isize } else { rhs_rs };
     let packed_rhs_cs = if do_pack_rhs { 1 } else { rhs_cs };
 
-    let mut did_pack_lhs = vec![false; mc / MR];
+    let mut did_pack_lhs = alloc::vec![false; mc / MR];
     let did_pack_lhs = Ptr((&mut *did_pack_lhs) as *mut _);
-
-    let max_threads = match parallelism {
-        Parallelism::None => 1,
-        Parallelism::Rayon(n_threads) => {
-            if n_threads == 0 {
-                rayon::current_num_threads()
-            } else {
-                n_threads
-            }
-        }
-    };
 
     let mut col_outer = 0;
     while col_outer != n {
@@ -425,6 +435,7 @@ pub unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
+                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(_) => {
                     let total_work = (m * n_chunk).saturating_mul(k_chunk);
                     if total_work < threading_threshold {
@@ -456,45 +467,53 @@ pub unsafe fn gemm_basic_generic<
                         packed_rhs_stride,
                     );
                 } else {
-                    let n_tasks = div_ceil(n_chunk, NR);
-                    let base = n_tasks / n_threads;
-                    let rem = n_tasks % n_threads;
+                    #[cfg(feature = "rayon")]
+                    {
+                        let n_tasks = n_chunk.div_ceil(NR);
+                        let base = n_tasks / n_threads;
+                        let rem = n_tasks % n_threads;
 
-                    let tid_to_col_inner = |tid: usize| {
-                        if tid == n_threads {
-                            return n_chunk;
-                        }
+                        let tid_to_col_inner = |tid: usize| {
+                            if tid == n_threads {
+                                return n_chunk;
+                            }
 
-                        let col = if tid < rem {
-                            NR * tid * (base + 1)
-                        } else {
-                            NR * (rem + tid * base)
+                            let col = if tid < rem {
+                                NR * tid * (base + 1)
+                            } else {
+                                NR * (rem + tid * base)
+                            };
+                            col.min(n_chunk)
                         };
-                        col.min(n_chunk)
-                    };
 
-                    let func = |tid: usize| {
-                        let col_inner = tid_to_col_inner(tid);
-                        let ncols = tid_to_col_inner(tid + 1) - col_inner;
-                        let j = col_inner / NR;
+                        let func = |tid: usize| {
+                            let col_inner = tid_to_col_inner(tid);
+                            let ncols = tid_to_col_inner(tid + 1) - col_inner;
+                            let j = col_inner / NR;
 
-                        if ncols > 0 {
-                            pack_rhs::<T, 1, NR, _>(
-                                simd,
-                                ncols,
-                                k_chunk,
-                                packed_rhs.wrapping_add(j * packed_rhs_stride),
-                                rhs.wrapping_offset(
-                                    depth_outer as isize * rhs_rs
-                                        + (col_outer + col_inner) as isize * rhs_cs,
-                                ),
-                                rhs_cs,
-                                rhs_rs,
-                                packed_rhs_stride,
-                            );
-                        }
-                    };
-                    par_for_each(n_threads, func);
+                            if ncols > 0 {
+                                pack_rhs::<T, 1, NR, _>(
+                                    simd,
+                                    ncols,
+                                    k_chunk,
+                                    packed_rhs.wrapping_add(j * packed_rhs_stride),
+                                    rhs.wrapping_offset(
+                                        depth_outer as isize * rhs_rs
+                                            + (col_outer + col_inner) as isize * rhs_cs,
+                                    ),
+                                    rhs_cs,
+                                    rhs_rs,
+                                    packed_rhs_stride,
+                                );
+                            }
+                        };
+                        par_for_each(n_threads, func);
+                    }
+
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        unreachable!();
+                    }
                 }
             }
             if do_prepack_lhs {
@@ -524,164 +543,187 @@ pub unsafe fn gemm_basic_generic<
                 row_outer += m_chunk;
             }
 
-            let func = move |tid| {
-                L2_SLAB.with(|mem| {
-                    let mut mem = mem.borrow_mut();
-                    let stack = DynStack::new(&mut **mem);
-                    let mut did_pack_lhs_storage = vec![false; if tid > 0 { mc / MR } else { 0 }];
-                    let did_pack_lhs = if tid > 0 {
-                        &mut *did_pack_lhs_storage
-                    } else {
-                        &mut *({ did_pack_lhs }.0)
-                    };
+            let func = move |tid, packed_lhs: Ptr<T>| {
+                let mut did_pack_lhs_storage =
+                    alloc::vec![false; if tid > 0 { mc / MR } else { 0 }];
+                let did_pack_lhs = if tid > 0 {
+                    &mut *did_pack_lhs_storage
+                } else {
+                    &mut *({ did_pack_lhs }.0)
+                };
 
-                    let (mut packed_lhs_storage, _) =
-                        stack.make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
+                let min_jobs_per_thread = n_jobs / n_threads;
+                let rem = n_jobs - n_threads * min_jobs_per_thread;
 
-                    let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
+                // thread `tid` takes min_jobs_per_thread or min_jobs_per_thread + 1
+                let (job_start, job_end) = if tid < rem {
+                    let start = tid * (min_jobs_per_thread + 1);
+                    (start, start + min_jobs_per_thread + 1)
+                } else {
+                    // start = rem * (min_jobs_per_thread + 1) + (tid - rem) * min_jobs_per_thread;
+                    let start = tid * min_jobs_per_thread + rem;
+                    (start, start + min_jobs_per_thread)
+                };
 
-                    let min_jobs_per_thread = n_jobs / n_threads;
-                    let rem = n_jobs - n_threads * min_jobs_per_thread;
-
-                    // thread `tid` takes min_jobs_per_thread or min_jobs_per_thread + 1
-                    let (job_start, job_end) = if tid < rem {
-                        let start = tid * (min_jobs_per_thread + 1);
-                        (start, start + min_jobs_per_thread + 1)
-                    } else {
-                        // start = rem * (min_jobs_per_thread + 1) + (tid - rem) * min_jobs_per_thread;
-                        let start = tid * min_jobs_per_thread + rem;
-                        (start, start + min_jobs_per_thread)
-                    };
-
-                    let mut row_outer = 0;
-                    let mut job_id = 0;
-                    while row_outer != m {
-                        let mut m_chunk = mc.min(m - row_outer);
-                        if m_chunk > N && !do_prepack_lhs {
-                            m_chunk = m_chunk / N * N;
-                        }
-                        let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
-
-                        let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
-
-                        if job_id >= job_end {
-                            return;
-                        }
-                        if job_id + n_mini_jobs < job_start {
-                            row_outer += m_chunk;
-                            job_id += n_mini_jobs;
-                            continue;
-                        }
-
-                        let do_pack_lhs = !do_prepack_lhs
-                            && ((m_chunk % N != 0)
-                                || lhs_rs != 1
-                                || n_chunk > packing_threshold * NR);
-                        let packed_lhs_cs = if do_prepack_lhs || do_pack_lhs {
-                            MR as isize
-                        } else {
-                            lhs_cs
-                        };
-
-                        let mut j = 0;
-                        did_pack_lhs.fill(false);
-                        while j < n_col_mini_chunks {
-                            let mut i = 0;
-                            while i < n_row_mini_chunks {
-                                let col_inner = NR * j;
-                                let n_chunk_inner = NR.min(n_chunk - col_inner);
-
-                                let row_inner = MR * i;
-                                let m_chunk_inner = MR.min(m_chunk - row_inner);
-
-                                let inner_idx = &mut i;
-                                if job_id < job_start || job_id >= job_end {
-                                    job_id += 1;
-                                    *inner_idx += 1;
-                                    continue;
-                                }
-                                job_id += 1;
-
-                                let dst = dst.wrapping_offset(
-                                    (row_outer + row_inner) as isize * dst_rs
-                                        + (col_outer + col_inner) as isize * dst_cs,
-                                );
-
-                                let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
-                                    [n_chunk_inner - 1];
-
-                                if do_pack_lhs && !did_pack_lhs[i] {
-                                    pack_lhs::<T, N, MR, _>(
-                                        simd,
-                                        m_chunk_inner,
-                                        k_chunk,
-                                        packed_lhs.wrapping_add(i * packed_lhs_stride),
-                                        lhs.wrapping_offset(
-                                            (row_outer + row_inner) as isize * lhs_rs
-                                                + depth_outer as isize * lhs_cs,
-                                        ),
-                                        lhs_cs,
-                                        lhs_rs,
-                                        packed_lhs_stride,
-                                    );
-                                    did_pack_lhs[i] = true;
-                                }
-
-                                func(
-                                    m_chunk_inner,
-                                    n_chunk_inner,
-                                    k_chunk,
-                                    dst.0,
-                                    if do_pack_lhs {
-                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
-                                    } else if do_prepack_lhs {
-                                        prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
-                                    } else {
-                                        lhs.wrapping_offset(
-                                            (row_outer + row_inner) as isize * lhs_rs
-                                                + depth_outer as isize * lhs_cs,
-                                        )
-                                        .0
-                                    },
-                                    if do_pack_rhs {
-                                        packed_rhs.wrapping_add(j * packed_rhs_stride).0
-                                    } else {
-                                        rhs.wrapping_offset(
-                                            depth_outer as isize * rhs_rs
-                                                + (col_outer + col_inner) as isize * rhs_cs,
-                                        )
-                                        .0
-                                    },
-                                    dst_cs,
-                                    dst_rs,
-                                    packed_lhs_cs,
-                                    packed_rhs_rs,
-                                    packed_rhs_cs,
-                                    alpha,
-                                    beta,
-                                    alpha_status,
-                                    conj_dst,
-                                    conj_lhs,
-                                    conj_rhs,
-                                    core::ptr::null(),
-                                );
-                                i += 1;
-                            }
-                            j += 1;
-                        }
-
-                        row_outer += m_chunk;
+                let mut row_outer = 0;
+                let mut job_id = 0;
+                while row_outer != m {
+                    let mut m_chunk = mc.min(m - row_outer);
+                    if m_chunk > N && !do_prepack_lhs {
+                        m_chunk = m_chunk / N * N;
                     }
-                });
+                    let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
+
+                    let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
+
+                    if job_id >= job_end {
+                        return;
+                    }
+                    if job_id + n_mini_jobs < job_start {
+                        row_outer += m_chunk;
+                        job_id += n_mini_jobs;
+                        continue;
+                    }
+
+                    let do_pack_lhs = !do_prepack_lhs
+                        && ((m_chunk % N != 0) || lhs_rs != 1 || n_chunk > packing_threshold * NR);
+                    let packed_lhs_cs = if do_prepack_lhs || do_pack_lhs {
+                        MR as isize
+                    } else {
+                        lhs_cs
+                    };
+
+                    let mut j = 0;
+                    did_pack_lhs.fill(false);
+                    while j < n_col_mini_chunks {
+                        let mut i = 0;
+                        while i < n_row_mini_chunks {
+                            let col_inner = NR * j;
+                            let n_chunk_inner = NR.min(n_chunk - col_inner);
+
+                            let row_inner = MR * i;
+                            let m_chunk_inner = MR.min(m_chunk - row_inner);
+
+                            let inner_idx = &mut i;
+                            if job_id < job_start || job_id >= job_end {
+                                job_id += 1;
+                                *inner_idx += 1;
+                                continue;
+                            }
+                            job_id += 1;
+
+                            let dst = dst.wrapping_offset(
+                                (row_outer + row_inner) as isize * dst_rs
+                                    + (col_outer + col_inner) as isize * dst_cs,
+                            );
+
+                            let func =
+                                dispatcher[(m_chunk_inner + (N - 1)) / N - 1][n_chunk_inner - 1];
+
+                            if do_pack_lhs && !did_pack_lhs[i] {
+                                pack_lhs::<T, N, MR, _>(
+                                    simd,
+                                    m_chunk_inner,
+                                    k_chunk,
+                                    packed_lhs.wrapping_add(i * packed_lhs_stride),
+                                    lhs.wrapping_offset(
+                                        (row_outer + row_inner) as isize * lhs_rs
+                                            + depth_outer as isize * lhs_cs,
+                                    ),
+                                    lhs_cs,
+                                    lhs_rs,
+                                    packed_lhs_stride,
+                                );
+                                did_pack_lhs[i] = true;
+                            }
+
+                            func(
+                                m_chunk_inner,
+                                n_chunk_inner,
+                                k_chunk,
+                                dst.0,
+                                if do_pack_lhs || do_prepack_lhs {
+                                    packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                } else {
+                                    lhs.wrapping_offset(
+                                        (row_outer + row_inner) as isize * lhs_rs
+                                            + depth_outer as isize * lhs_cs,
+                                    )
+                                    .0
+                                },
+                                if do_pack_rhs {
+                                    packed_rhs.wrapping_add(j * packed_rhs_stride).0
+                                } else {
+                                    rhs.wrapping_offset(
+                                        depth_outer as isize * rhs_rs
+                                            + (col_outer + col_inner) as isize * rhs_cs,
+                                    )
+                                    .0
+                                },
+                                dst_cs,
+                                dst_rs,
+                                packed_lhs_cs,
+                                packed_rhs_rs,
+                                packed_rhs_cs,
+                                alpha,
+                                beta,
+                                alpha_status,
+                                conj_dst,
+                                conj_lhs,
+                                conj_rhs,
+                                core::ptr::null(),
+                            );
+                            i += 1;
+                        }
+                        j += 1;
+                    }
+
+                    row_outer += m_chunk;
+                }
             };
 
-            match parallelism {
-                Parallelism::None => func(0),
-                Parallelism::Rayon(_) => {
-                    if n_threads == 1 {
-                        func(0);
-                    } else {
-                        par_for_each(n_threads, func);
+            if do_prepack_lhs {
+                match parallelism {
+                    Parallelism::None => func(0, prepacked_lhs),
+                    #[cfg(feature = "rayon")]
+                    Parallelism::Rayon(_) => {
+                        if n_threads == 1 {
+                            func(0, prepacked_lhs);
+                        } else {
+                            par_for_each(n_threads, |tid| func(tid, prepacked_lhs));
+                        }
+                    }
+                }
+            } else {
+                #[cfg(feature = "std")]
+                let func = |tid: usize| {
+                    L2_SLAB.with_borrow_mut(|mem| {
+                        let stack = DynStack::new(mem);
+                        let (mut packed_lhs_storage, _) = stack
+                            .make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
+                        let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
+                        func(tid, packed_lhs);
+                    });
+                };
+
+                #[cfg(not(feature = "std"))]
+                let mut func = |tid: usize| {
+                    let stack = DynStack::new(&mut l2_slab);
+                    let (mut packed_lhs_storage, _) =
+                        stack.make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
+                    let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
+                    func(tid, packed_lhs);
+                };
+
+                match parallelism {
+                    Parallelism::None => func(0),
+                    #[cfg(feature = "rayon")]
+                    Parallelism::Rayon(_) => {
+                        if n_threads == 1 {
+                            func(0);
+                        } else {
+                            par_for_each(n_threads, func);
+                        }
                     }
                 }
             }

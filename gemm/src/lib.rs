@@ -58,10 +58,16 @@ mod tests {
         mnks.push((4, 63, 10));
 
         for (m, n, k) in mnks {
+            #[cfg(feature = "std")]
             dbg!(m, n, k);
-            for parallelism in [Parallelism::None, Parallelism::Rayon(0)] {
+            for parallelism in [
+                Parallelism::None,
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(0),
+            ] {
                 for alpha in [0.0, 1.0, 2.3] {
                     for beta in [0.0, 1.0, 2.3] {
+                        #[cfg(feature = "std")]
                         dbg!(alpha, beta, parallelism);
                         let alpha = f16::from_f32(alpha);
                         let beta = f16::from_f32(beta);
@@ -172,14 +178,18 @@ mod tests {
         mnks.push((4, 63, 10));
 
         for (m, n, k) in mnks {
+            #[cfg(feature = "std")]
             dbg!(m, n, k);
             for parallelism in [
                 Parallelism::None,
+                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(0),
+                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(128),
             ] {
                 for alpha in [0.0, 1.0, 2.3] {
                     for beta in [0.0, 1.0, 2.3] {
+                        #[cfg(feature = "std")]
                         dbg!(alpha, beta, parallelism);
                         let a_vec: Vec<f64> = (0..(m * k)).map(|_| rand::random()).collect();
                         let b_vec: Vec<f64> = (0..(k * n)).map(|_| rand::random()).collect();
@@ -271,6 +281,7 @@ mod tests {
         mnks.push((4, 63, 10));
 
         for (m, n, k) in mnks {
+            #[cfg(feature = "std")]
             dbg!(m, n, k);
 
             let zero = c64::new(0.0, 0.0);
@@ -278,12 +289,16 @@ mod tests {
             let arbitrary = c64::new(2.3, 4.1);
             for alpha in [zero, one, arbitrary] {
                 for beta in [zero, one, arbitrary] {
+                    #[cfg(feature = "std")]
                     dbg!(alpha, beta);
                     for conj_dst in [false, true] {
                         for conj_lhs in [false, true] {
                             for conj_rhs in [false, true] {
+                                #[cfg(feature = "std")]
                                 dbg!(conj_dst);
+                                #[cfg(feature = "std")]
                                 dbg!(conj_lhs);
+                                #[cfg(feature = "std")]
                                 dbg!(conj_rhs);
                                 let a_vec: Vec<f64> =
                                     (0..(2 * m * k)).map(|_| rand::random()).collect();
@@ -313,7 +328,10 @@ mod tests {
                                         conj_dst,
                                         conj_lhs,
                                         conj_rhs,
+                                        #[cfg(feature = "rayon")]
                                         Parallelism::Rayon(0),
+                                        #[cfg(not(feature = "rayon"))]
+                                        Parallelism::None,
                                     );
 
                                     gemm::gemm_cplx_fallback(

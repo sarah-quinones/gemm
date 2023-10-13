@@ -301,12 +301,7 @@ pub(crate) unsafe fn gemm_cplx_fallback<T>(
     conj_lhs: bool,
     conj_rhs: bool,
 ) where
-    T: num_traits::Zero
-        + Send
-        + Sync
-        + std::clone::Clone
-        + num_traits::Num
-        + core::ops::Neg<Output = T>,
+    T: num_traits::Zero + Send + Sync + Copy + num_traits::Num + core::ops::Neg<Output = T>,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Sub<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,

@@ -1,9 +1,14 @@
 use core::any::TypeId;
 
 use dyn_stack::{DynStack, GlobalMemBuffer, StackReq};
+#[cfg(feature = "std")]
+use gemm_common::gemm::L2_SLAB;
+#[cfg(feature = "rayon")]
+use gemm_common::gemm::{get_threading_threshold, par_for_each};
+
 use gemm_common::{
-    cache::{div_ceil, kernel_params, KernelParams},
-    gemm::{get_threading_threshold, par_for_each, CACHELINE_ALIGN, L2_SLAB},
+    cache::{kernel_params, KernelParams},
+    gemm::CACHELINE_ALIGN,
     gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::quick_zero,
@@ -377,7 +382,8 @@ pub unsafe fn gemm_basic_generic<
     } else {
         match parallelism {
             Parallelism::None => 128 * NR,
-            Parallelism::Rayon(_) => div_ceil(n, NR) * NR,
+            #[cfg(feature = "rayon")]
+            Parallelism::Rayon(_) => n.next_multiple_of(NR),
         }
     };
 
@@ -403,6 +409,11 @@ pub unsafe fn gemm_basic_generic<
     );
 
     let mut mem = GlobalMemBuffer::new(rhs_req.and(lhs_req));
+    #[cfg(not(feature = "std"))]
+    let mut l2_slab = GlobalMemBuffer::new(StackReq::new_aligned::<f32>(
+        packed_lhs_stride * (mc / MR),
+        simd_align,
+    ));
 
     let stack = DynStack::new(&mut mem);
     let (mut packed_rhs_storage, stack) =
@@ -444,9 +455,11 @@ pub unsafe fn gemm_basic_generic<
 
             let n_threads = match parallelism {
                 Parallelism::None => 1,
+                #[cfg(feature = "rayon")]
                 Parallelism::Rayon(n_threads) => {
                     let threading_threshold = get_threading_threshold();
-                    if m * n_chunk * k_chunk <= threading_threshold {
+                    let total_work = (m * n_chunk).saturating_mul(k_chunk);
+                    if total_work < threading_threshold {
                         1
                     } else {
                         if n_threads == 0 {
@@ -459,7 +472,7 @@ pub unsafe fn gemm_basic_generic<
             };
 
             // pack rhs
-            if true || n_threads <= 1 {
+            if n_threads <= 1 {
                 pack_rhs::<N, NR, _>(
                     simd,
                     n_chunk,
@@ -473,46 +486,52 @@ pub unsafe fn gemm_basic_generic<
                     packed_rhs_stride,
                 );
             } else {
-                let n_tasks = div_ceil(n_chunk, NR);
-                let base = n_tasks / n_threads;
-                let rem = n_tasks % n_threads;
+                #[cfg(feature = "rayon")]
+                {
+                    let n_tasks = n_chunk.div_ceil(NR);
+                    let base = n_tasks / n_threads;
+                    let rem = n_tasks % n_threads;
 
-                let tid_to_col_inner = |tid: usize| {
-                    if tid == n_threads {
-                        return n_chunk;
-                    }
+                    let tid_to_col_inner = |tid: usize| {
+                        if tid == n_threads {
+                            return n_chunk;
+                        }
 
-                    let col = if tid < rem {
-                        NR * tid * (base + 1)
-                    } else {
-                        NR * (rem + tid * base)
+                        let col = if tid < rem {
+                            NR * tid * (base + 1)
+                        } else {
+                            NR * (rem + tid * base)
+                        };
+
+                        col.min(n_chunk)
                     };
 
-                    col.min(n_chunk)
-                };
+                    let func = |tid: usize| {
+                        let col_inner = tid_to_col_inner(tid);
+                        let ncols = tid_to_col_inner(tid + 1) - col_inner;
+                        let j = col_inner / NR;
 
-                let func = |tid: usize| {
-                    let col_inner = tid_to_col_inner(tid);
-                    let ncols = tid_to_col_inner(tid + 1) - col_inner;
-                    let j = col_inner / NR;
+                        if ncols > 0 {
+                            pack_rhs::<N, NR, _>(
+                                simd,
+                                ncols,
+                                k_chunk,
+                                packed_rhs.wrapping_add(j * packed_rhs_stride),
+                                rhs.wrapping_offset(
+                                    depth_outer as isize * rhs_rs
+                                        + (col_outer + col_inner) as isize * rhs_cs,
+                                ),
+                                rhs_cs,
+                                rhs_rs,
+                                packed_rhs_stride,
+                            );
+                        }
+                    };
+                    par_for_each(n_threads, func);
+                }
 
-                    if ncols > 0 {
-                        pack_rhs::<N, NR, _>(
-                            simd,
-                            ncols,
-                            k_chunk,
-                            packed_rhs.wrapping_add(j * packed_rhs_stride),
-                            rhs.wrapping_offset(
-                                depth_outer as isize * rhs_rs
-                                    + (col_outer + col_inner) as isize * rhs_cs,
-                            ),
-                            rhs_cs,
-                            rhs_rs,
-                            packed_rhs_stride,
-                        );
-                    }
-                };
-                par_for_each(n_threads, func);
+                #[cfg(not(feature = "rayon"))]
+                unreachable!();
             }
             if do_prepack_lhs {
                 pack_lhs::<N, MR, _>(
@@ -543,175 +562,198 @@ pub unsafe fn gemm_basic_generic<
 
             // use a single thread for small workloads
 
-            let func = move |tid| {
-                L2_SLAB.with(|mem| {
-                    let mut mem = mem.borrow_mut();
-                    let stack = DynStack::new(&mut **mem);
+            let func = move |tid, packed_lhs: Ptr<f32>| {
+                let min_jobs_per_thread = n_jobs / n_threads;
+                let rem = n_jobs - n_threads * min_jobs_per_thread;
 
-                    let (mut packed_lhs_storage, _) =
-                        stack.make_aligned_uninit::<f32>(packed_lhs_stride * (mc / MR), simd_align);
+                // thread `tid` takes min_jobs_per_thread or min_jobs_per_thread + 1
+                let (job_start, job_end) = if tid < rem {
+                    let start = tid * (min_jobs_per_thread + 1);
+                    (start, start + min_jobs_per_thread + 1)
+                } else {
+                    // start = rem * (min_jobs_per_thread + 1) + (tid - rem) * min_jobs_per_thread;
+                    let start = tid * min_jobs_per_thread + rem;
+                    (start, start + min_jobs_per_thread)
+                };
 
-                    let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut f32);
-
-                    let min_jobs_per_thread = n_jobs / n_threads;
-                    let rem = n_jobs - n_threads * min_jobs_per_thread;
-
-                    // thread `tid` takes min_jobs_per_thread or min_jobs_per_thread + 1
-                    let (job_start, job_end) = if tid < rem {
-                        let start = tid * (min_jobs_per_thread + 1);
-                        (start, start + min_jobs_per_thread + 1)
-                    } else {
-                        // start = rem * (min_jobs_per_thread + 1) + (tid - rem) * min_jobs_per_thread;
-                        let start = tid * min_jobs_per_thread + rem;
-                        (start, start + min_jobs_per_thread)
-                    };
-
-                    let mut row_outer = 0;
-                    let mut job_id = 0;
-                    while row_outer != m {
-                        let mut m_chunk = mc.min(m - row_outer);
-                        if m_chunk > N && !do_prepack_lhs {
-                            m_chunk = m_chunk / N * N;
-                        }
-                        let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
-
-                        let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
-
-                        if job_id >= job_end {
-                            return;
-                        }
-                        if job_id + n_mini_jobs < job_start {
-                            row_outer += m_chunk;
-                            job_id += n_mini_jobs;
-                            continue;
-                        }
-
-                        let packed_lhs_cs = MR as isize;
-
-                        if !do_prepack_lhs {
-                            pack_lhs::<N, MR, _>(
-                                simd,
-                                m_chunk,
-                                k_chunk,
-                                packed_lhs,
-                                lhs.wrapping_offset(
-                                    row_outer as isize * lhs_rs + depth_outer as isize * lhs_cs,
-                                ),
-                                lhs_cs,
-                                lhs_rs,
-                                packed_lhs_stride,
-                            );
-                        }
-
-                        let mut j = 0;
-                        while j < n_col_mini_chunks {
-                            let mut i = 0;
-                            while i < n_row_mini_chunks {
-                                let col_inner = NR * j;
-                                let n_chunk_inner = NR.min(n_chunk - col_inner);
-
-                                let row_inner = MR * i;
-                                let m_chunk_inner = MR.min(m_chunk - row_inner);
-
-                                let inner_idx = &mut i;
-                                if job_id < job_start || job_id >= job_end {
-                                    job_id += 1;
-                                    *inner_idx += 1;
-                                    continue;
-                                }
-                                job_id += 1;
-
-                                let dst = dst.wrapping_offset(
-                                    (row_outer + row_inner) as isize * dst_rs
-                                        + (col_outer + col_inner) as isize * dst_cs,
-                                );
-
-                                let func = dispatcher[(m_chunk_inner + (N - 1)) / N - 1]
-                                    [n_chunk_inner - 1];
-
-                                let mut tmp = [[0.0f32; MR]; NR];
-
-                                func(
-                                    m_chunk_inner,
-                                    n_chunk_inner,
-                                    k_chunk,
-                                    tmp.as_mut_ptr() as *mut f32,
-                                    if do_prepack_lhs {
-                                        prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
-                                    } else {
-                                        packed_lhs.wrapping_add(i * packed_lhs_stride).0
-                                    },
-                                    packed_rhs.wrapping_add(j * packed_rhs_stride).0,
-                                    MR as isize,
-                                    1,
-                                    packed_lhs_cs,
-                                    packed_rhs_rs,
-                                    packed_rhs_cs,
-                                    0.0,
-                                    beta.into(),
-                                    0,
-                                    false,
-                                    false,
-                                    false,
-                                    packed_lhs.wrapping_add((i + 1) * packed_lhs_stride).0,
-                                );
-
-                                match alpha_status {
-                                    0 => {
-                                        for j in 0..n_chunk_inner {
-                                            for i in 0..m_chunk_inner {
-                                                let dst = dst
-                                                    .wrapping_offset(j as isize * dst_cs)
-                                                    .wrapping_offset(i as isize * dst_rs)
-                                                    .0;
-                                                *dst = simd.into_dst(tmp[j][i]);
-                                            }
-                                        }
-                                    }
-                                    1 => {
-                                        for j in 0..n_chunk_inner {
-                                            for i in 0..m_chunk_inner {
-                                                let dst = dst
-                                                    .wrapping_offset(j as isize * dst_cs)
-                                                    .wrapping_offset(i as isize * dst_rs)
-                                                    .0;
-                                                *dst =
-                                                    simd.into_dst(simd.from_dst(*dst) + tmp[j][i]);
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        for j in 0..n_chunk_inner {
-                                            for i in 0..m_chunk_inner {
-                                                let dst = dst
-                                                    .wrapping_offset(j as isize * dst_cs)
-                                                    .wrapping_offset(i as isize * dst_rs)
-                                                    .0;
-                                                *dst = simd.into_dst(
-                                                    alpha * simd.from_dst(*dst) + tmp[j][i],
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-
-                                i += 1;
-                            }
-                            j += 1;
-                        }
-
-                        row_outer += m_chunk;
+                let mut row_outer = 0;
+                let mut job_id = 0;
+                while row_outer != m {
+                    let mut m_chunk = mc.min(m - row_outer);
+                    if m_chunk > N && !do_prepack_lhs {
+                        m_chunk = m_chunk / N * N;
                     }
-                });
+                    let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
+
+                    let n_mini_jobs = n_col_mini_chunks * n_row_mini_chunks;
+
+                    if job_id >= job_end {
+                        return;
+                    }
+                    if job_id + n_mini_jobs < job_start {
+                        row_outer += m_chunk;
+                        job_id += n_mini_jobs;
+                        continue;
+                    }
+
+                    let packed_lhs_cs = MR as isize;
+
+                    if !do_prepack_lhs {
+                        pack_lhs::<N, MR, _>(
+                            simd,
+                            m_chunk,
+                            k_chunk,
+                            packed_lhs,
+                            lhs.wrapping_offset(
+                                row_outer as isize * lhs_rs + depth_outer as isize * lhs_cs,
+                            ),
+                            lhs_cs,
+                            lhs_rs,
+                            packed_lhs_stride,
+                        );
+                    }
+
+                    let mut j = 0;
+                    while j < n_col_mini_chunks {
+                        let mut i = 0;
+                        while i < n_row_mini_chunks {
+                            let col_inner = NR * j;
+                            let n_chunk_inner = NR.min(n_chunk - col_inner);
+
+                            let row_inner = MR * i;
+                            let m_chunk_inner = MR.min(m_chunk - row_inner);
+
+                            let inner_idx = &mut i;
+                            if job_id < job_start || job_id >= job_end {
+                                job_id += 1;
+                                *inner_idx += 1;
+                                continue;
+                            }
+                            job_id += 1;
+
+                            let dst = dst.wrapping_offset(
+                                (row_outer + row_inner) as isize * dst_rs
+                                    + (col_outer + col_inner) as isize * dst_cs,
+                            );
+
+                            let func =
+                                dispatcher[(m_chunk_inner + (N - 1)) / N - 1][n_chunk_inner - 1];
+
+                            let mut tmp = [[0.0f32; MR]; NR];
+
+                            func(
+                                m_chunk_inner,
+                                n_chunk_inner,
+                                k_chunk,
+                                tmp.as_mut_ptr() as *mut f32,
+                                if do_prepack_lhs {
+                                    prepacked_lhs.wrapping_add(i * packed_lhs_stride).0
+                                } else {
+                                    packed_lhs.wrapping_add(i * packed_lhs_stride).0
+                                },
+                                packed_rhs.wrapping_add(j * packed_rhs_stride).0,
+                                MR as isize,
+                                1,
+                                packed_lhs_cs,
+                                packed_rhs_rs,
+                                packed_rhs_cs,
+                                0.0,
+                                beta.into(),
+                                0,
+                                false,
+                                false,
+                                false,
+                                packed_lhs.wrapping_add((i + 1) * packed_lhs_stride).0,
+                            );
+
+                            match alpha_status {
+                                0 => {
+                                    for j in 0..n_chunk_inner {
+                                        for i in 0..m_chunk_inner {
+                                            let dst = dst
+                                                .wrapping_offset(j as isize * dst_cs)
+                                                .wrapping_offset(i as isize * dst_rs)
+                                                .0;
+                                            *dst = simd.into_dst(tmp[j][i]);
+                                        }
+                                    }
+                                }
+                                1 => {
+                                    for j in 0..n_chunk_inner {
+                                        for i in 0..m_chunk_inner {
+                                            let dst = dst
+                                                .wrapping_offset(j as isize * dst_cs)
+                                                .wrapping_offset(i as isize * dst_rs)
+                                                .0;
+                                            *dst = simd.into_dst(simd.from_dst(*dst) + tmp[j][i]);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    for j in 0..n_chunk_inner {
+                                        for i in 0..m_chunk_inner {
+                                            let dst = dst
+                                                .wrapping_offset(j as isize * dst_cs)
+                                                .wrapping_offset(i as isize * dst_rs)
+                                                .0;
+                                            *dst = simd
+                                                .into_dst(alpha * simd.from_dst(*dst) + tmp[j][i]);
+                                        }
+                                    }
+                                }
+                            }
+
+                            i += 1;
+                        }
+                        j += 1;
+                    }
+
+                    row_outer += m_chunk;
+                }
             };
 
-            match parallelism {
-                Parallelism::None => func(0),
-                Parallelism::Rayon(_) => {
-                    if n_threads == 1 {
-                        func(0);
-                    } else {
-                        par_for_each(n_threads, func);
+            if do_prepack_lhs {
+                match parallelism {
+                    Parallelism::None => func(0, prepacked_lhs),
+                    #[cfg(feature = "rayon")]
+                    Parallelism::Rayon(_) => {
+                        if n_threads == 1 {
+                            func(0, prepacked_lhs);
+                        } else {
+                            par_for_each(n_threads, |tid| func(tid, prepacked_lhs));
+                        }
+                    }
+                }
+            } else {
+                #[cfg(feature = "std")]
+                let func = |tid: usize| {
+                    L2_SLAB.with_borrow_mut(|mem| {
+                        let stack = DynStack::new(mem);
+                        let (mut packed_lhs_storage, _) = stack
+                            .make_aligned_uninit::<f32>(packed_lhs_stride * (mc / MR), simd_align);
+                        let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut f32);
+                        func(tid, packed_lhs);
+                    });
+                };
+
+                #[cfg(not(feature = "std"))]
+                let mut func = |tid: usize| {
+                    let stack = DynStack::new(&mut l2_slab);
+                    let (mut packed_lhs_storage, _) =
+                        stack.make_aligned_uninit::<f32>(packed_lhs_stride * (mc / MR), simd_align);
+                    let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut f32);
+                    func(tid, packed_lhs);
+                };
+
+                match parallelism {
+                    Parallelism::None => func(0),
+                    #[cfg(feature = "rayon")]
+                    Parallelism::Rayon(_) => {
+                        if n_threads == 1 {
+                            func(0);
+                        } else {
+                            par_for_each(n_threads, func);
+                        }
                     }
                 }
             }

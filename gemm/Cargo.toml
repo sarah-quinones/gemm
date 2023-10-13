@@ -16,20 +16,42 @@ seq-macro = { workspace = true }
 dyn-stack = { workspace = true }
 num-traits = { workspace = true }
 num-complex = { workspace = true }
-rayon = { workspace = true }
 paste = { workspace = true }
 
-gemm-common = { version = "0.16.0", path = "../gemm-common" }
-gemm-f16 = { version = "0.16.0", path = "../gemm-f16" }
-gemm-f32 = { version = "0.16.0", path = "../gemm-f32" }
-gemm-f64 = { version = "0.16.0", path = "../gemm-f64" }
-gemm-c32 = { version = "0.16.0", path = "../gemm-c32" }
-gemm-c64 = { version = "0.16.0", path = "../gemm-c64" }
+gemm-common = { version = "0.16.1", path = "../gemm-common", default-features = false }
+gemm-f16 = { version = "0.16.1", path = "../gemm-f16", default-features = false }
+gemm-f32 = { version = "0.16.1", path = "../gemm-f32", default-features = false }
+gemm-f64 = { version = "0.16.1", path = "../gemm-f64", default-features = false }
+gemm-c32 = { version = "0.16.1", path = "../gemm-c32", default-features = false }
+gemm-c64 = { version = "0.16.1", path = "../gemm-c64", default-features = false }
 
 [features]
 default = ["std"]
-std = []
-nightly = ["gemm-common/nightly", "gemm-f32/nightly", "gemm-f64/nightly", "gemm-c32/nightly", "gemm-c64/nightly"]
+std = [
+  "gemm-common/std",
+  "gemm-f32/std",
+  "gemm-f64/std",
+  "gemm-c32/std",
+  "gemm-c64/std",
+  "gemm-f16/std",
+]
+nightly = [
+  "gemm-common/nightly",
+  "gemm-f32/nightly",
+  "gemm-f64/nightly",
+  "gemm-c32/nightly",
+  "gemm-c64/nightly",
+  "gemm-f16/nightly",
+]
+rayon = [
+  "std",
+  "gemm-common/rayon",
+  "gemm-f32/rayon",
+  "gemm-f64/rayon",
+  "gemm-c32/rayon",
+  "gemm-c64/rayon",
+  "gemm-f16/rayon",
+]
 wasm-simd128-enable = ["gemm-common/wasm-simd128-enable"]
 
 [dev-dependencies]

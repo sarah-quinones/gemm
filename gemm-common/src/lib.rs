@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly", feature(stdsimd), feature(avx512_target_feature))]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
@@ -19,6 +20,8 @@ pub fn set_wasm_simd128(enable: bool) {
     WASM_SIMD128.store(enable, Relaxed)
 }
 
+extern crate alloc;
+
 pub mod cache;
 
 pub mod gemm;
@@ -32,6 +35,7 @@ pub mod simd;
 #[derive(Copy, Clone, Debug)]
 pub enum Parallelism {
     None,
+    #[cfg(feature = "rayon")]
     Rayon(usize),
 }
 

@@ -201,16 +201,6 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 #[inline]
-pub fn div_ceil(a: usize, b: usize) -> usize {
-    let d = a / b;
-    let r = a % b;
-    if r > 0 && b > 0 {
-        d + 1
-    } else {
-        d
-    }
-}
-#[inline]
 fn round_down(a: usize, b: usize) -> usize {
     a / b * b
 }
@@ -268,8 +258,8 @@ pub fn kernel_params(
     let kc_multiplier = l1_assoc / (c_lhs + c_rhs);
     // let auto_kc = kc_0 * kc_multiplier;
     let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(512).min(k);
-    let k_iter = div_ceil(k, auto_kc);
-    let auto_kc = div_ceil(k, k_iter);
+    let k_iter = k.div_ceil(auto_kc);
+    let auto_kc = k.div_ceil(k_iter);
 
     // l2 cache must hold
     //  - B micropanel: nr×kc: assume 1 assoc degree
@@ -279,7 +269,7 @@ pub fn kernel_params(
         panic!();
     } else {
         let rhs_micropanel_bytes = nr * auto_kc * sizeof;
-        let rhs_l2_assoc = div_ceil(rhs_micropanel_bytes, l2_cache_bytes / l2_assoc);
+        let rhs_l2_assoc = rhs_micropanel_bytes.div_ceil(l2_cache_bytes / l2_assoc);
         let lhs_l2_assoc = (l2_assoc - 1 - rhs_l2_assoc).max(1);
 
         let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
@@ -294,8 +284,8 @@ pub fn kernel_params(
             }),
             mr,
         );
-        let m_iter = div_ceil(m, auto_mc);
-        div_ceil(m, m_iter * mr) * mr
+        let m_iter = m.div_ceil(auto_mc);
+        m.div_ceil(m_iter * mr) * mr
     };
 
     // l3 cache must hold
@@ -310,8 +300,8 @@ pub fn kernel_params(
         let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
 
         let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);
-        let n_iter = div_ceil(n, auto_nc);
-        div_ceil(n, n_iter * nr) * nr
+        let n_iter = n.div_ceil(auto_nc);
+        n.div_ceil(n_iter * nr) * nr
     };
 
     KernelParams {
