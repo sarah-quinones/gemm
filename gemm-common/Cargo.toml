@@ -12,7 +12,7 @@ keywords = ["linear-algebra"]
 [dependencies]
 raw-cpuid = { workspace = true }
 seq-macro = { workspace = true }
-once_cell = { workspace = true, default-features = false, features = ["race"] }
+once_cell = { workspace = true, default-features = false, features = ["race", "alloc"] }
 dyn-stack = { workspace = true, default-features = false }
 num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
