@@ -4,7 +4,9 @@
 
 mod gemm;
 
-pub use crate::gemm::{c32, c64, f16, gemm};
+#[cfg(feature = "f16")]
+pub use crate::gemm::f16;
+pub use crate::gemm::{c32, c64, gemm};
 pub use gemm_common::Parallelism;
 
 pub use gemm_common::gemm::{
