@@ -16,7 +16,7 @@ once_cell = { workspace = true, default-features = false, features = ["race", "a
 dyn-stack = { workspace = true, default-features = false }
 num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
-half = { workspace = true, default-features = false }
+half = { workspace = true, default-features = false, optional=true }
 rayon = { workspace = true, optional = true }
 paste = { workspace = true }
 pulp = { version = "0.16", default-features = false }
@@ -28,4 +28,4 @@ std = ["pulp/std", "dyn-stack/std", "once_cell/std"]
 nightly = ["pulp/nightly"]
 wasm-simd128-enable = []
 rayon = ["dep:rayon", "std"]
-f16 = []
+f16 = ["half"]
