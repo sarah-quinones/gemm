@@ -565,6 +565,7 @@ mod x86 {
         __private: (),
     }
 
+    #[cfg(feature = "f16")]
     pulp::simd_type! {
         pub struct V3 {
             pub sse: "sse",
@@ -579,10 +580,10 @@ mod x86 {
             pub fma: "fma",
             pub f16c: "f16c",
         }
-
     }
 
     #[cfg(feature = "nightly")]
+    #[cfg(feature = "f16")]
     pulp::simd_type! {
         pub struct V4 {
             pub sse: "sse",
@@ -596,6 +597,40 @@ mod x86 {
             pub avx2: "avx2",
             pub fma: "fma",
             pub f16c: "f16c",
+            pub avx512f: "avx512f",
+        }
+    }
+
+    #[cfg(not(feature = "f16"))]
+    pulp::simd_type! {
+        pub struct V3 {
+            pub sse: "sse",
+            pub sse2: "sse2",
+            pub fxsr: "fxsr",
+            pub sse3: "sse3",
+            pub ssse3: "ssse3",
+            pub sse4_1: "sse4.1",
+            pub sse4_2: "sse4.2",
+            pub avx: "avx",
+            pub avx2: "avx2",
+            pub fma: "fma",
+        }
+    }
+
+    #[cfg(feature = "nightly")]
+    #[cfg(not(feature = "f16"))]
+    pulp::simd_type! {
+        pub struct V4 {
+            pub sse: "sse",
+            pub sse2: "sse2",
+            pub fxsr: "fxsr",
+            pub sse3: "sse3",
+            pub ssse3: "ssse3",
+            pub sse4_1: "sse4.1",
+            pub sse4_2: "sse4.2",
+            pub avx: "avx",
+            pub avx2: "avx2",
+            pub fma: "fma",
             pub avx512f: "avx512f",
         }
     }
