@@ -9,6 +9,7 @@ use crate::{
 use core::sync::atomic::{AtomicUsize, Ordering};
 use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
+#[cfg(feature = "f16")]
 use half::f16;
 use num_traits::{One, Zero};
 
@@ -66,6 +67,7 @@ pub trait Conj: Copy {
     fn conj(self) -> Self;
 }
 
+#[cfg(feature = "f16")]
 impl Conj for f16 {
     #[inline(always)]
     fn conj(self) -> Self {
