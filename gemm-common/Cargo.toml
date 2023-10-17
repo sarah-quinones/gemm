@@ -23,8 +23,9 @@ pulp = { version = "0.16", default-features = false }
 bytemuck = "1.14"
 
 [features]
-default = ["std", "rayon"]
+default = ["std", "rayon", "f16"]
 std = ["pulp/std", "dyn-stack/std", "once_cell/std"]
 nightly = ["pulp/nightly"]
 wasm-simd128-enable = []
 rayon = ["dep:rayon", "std"]
+f16 = []

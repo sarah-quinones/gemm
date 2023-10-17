@@ -13,6 +13,43 @@ pub struct KernelParams {
     pub nc: usize,
 }
 
+pub trait DivCeil: Sized {
+    fn msrv_div_ceil(self, rhs: Self) -> Self;
+    fn msrv_next_multiple_of(self, rhs: Self) -> Self;
+    fn msrv_checked_next_multiple_of(self, rhs: Self) -> Option<Self>;
+}
+
+impl DivCeil for usize {
+    #[inline]
+    fn msrv_div_ceil(self, rhs: Self) -> Self {
+        let d = self / rhs;
+        let r = self % rhs;
+        if r > 0 {
+            d + 1
+        } else {
+            d
+        }
+    }
+
+    #[inline]
+    fn msrv_next_multiple_of(self, rhs: Self) -> Self {
+        match self % rhs {
+            0 => self,
+            r => self + (rhs - r),
+        }
+    }
+
+    #[inline]
+    fn msrv_checked_next_multiple_of(self, rhs: Self) -> Option<Self> {
+        {
+            match self.checked_rem(rhs)? {
+                0 => Some(self),
+                r => self.checked_add(rhs - r),
+            }
+        }
+    }
+}
+
 #[cfg(all(not(miri), any(target_arch = "x86", target_arch = "x86_64")))]
 fn cache_info() -> Option<[CacheInfo; 3]> {
     use raw_cpuid::CpuId;
@@ -277,8 +314,8 @@ pub fn kernel_params(
     let kc_multiplier = l1_assoc / (c_lhs + c_rhs);
     // let auto_kc = kc_0 * kc_multiplier;
     let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(512).min(k);
-    let k_iter = k.div_ceil(auto_kc);
-    let auto_kc = k.div_ceil(k_iter);
+    let k_iter = k.msrv_div_ceil(auto_kc);
+    let auto_kc = k.msrv_div_ceil(k_iter);
 
     // l2 cache must hold
     //  - B micropanel: nr×kc: assume 1 assoc degree
@@ -288,7 +325,7 @@ pub fn kernel_params(
         panic!();
     } else {
         let rhs_micropanel_bytes = nr * auto_kc * sizeof;
-        let rhs_l2_assoc = rhs_micropanel_bytes.div_ceil(l2_cache_bytes / l2_assoc);
+        let rhs_l2_assoc = rhs_micropanel_bytes.msrv_div_ceil(l2_cache_bytes / l2_assoc);
         let lhs_l2_assoc = (l2_assoc - 1 - rhs_l2_assoc).max(1);
 
         let mc_from_lhs_l2_assoc = |lhs_l2_assoc: usize| -> usize {
@@ -303,8 +340,8 @@ pub fn kernel_params(
             }),
             mr,
         );
-        let m_iter = m.div_ceil(auto_mc);
-        m.div_ceil(m_iter * mr) * mr
+        let m_iter = m.msrv_div_ceil(auto_mc);
+        m.msrv_div_ceil(m_iter * mr) * mr
     };
 
     // l3 cache must hold
@@ -314,13 +351,13 @@ pub fn kernel_params(
         0
     } else {
         // let lhs_macropanel_bytes = auto_mc * auto_kc * sizeof;
-        // let lhs_l3_assoc = div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
+        // let lhs_l3_assoc = msrv_div_ceil(lhs_macropanel_bytes, l3_cache_bytes / l3_assoc);
         let rhs_l3_assoc = l3_assoc - 1;
         let rhs_macropanel_max_bytes = (rhs_l3_assoc * l3_cache_bytes) / l3_assoc;
 
         let auto_nc = round_down(rhs_macropanel_max_bytes / (sizeof * auto_kc), nr);
-        let n_iter = n.div_ceil(auto_nc);
-        n.div_ceil(n_iter * nr) * nr
+        let n_iter = n.msrv_div_ceil(auto_nc);
+        n.msrv_div_ceil(n_iter * nr) * nr
     };
 
     KernelParams {

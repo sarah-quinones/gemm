@@ -1,5 +1,5 @@
 use crate::{
-    cache::{kernel_params, KernelParams, CACHE_INFO},
+    cache::{kernel_params, DivCeil, KernelParams, CACHE_INFO},
     gemv, gevv,
     microkernel::MicroKernelFn,
     pack_operands::{pack_lhs, pack_rhs},
@@ -294,7 +294,7 @@ pub unsafe fn gemm_basic_generic<
         KernelParams {
             kc,
             mc,
-            nc: n.next_multiple_of(NR),
+            nc: n.msrv_next_multiple_of(NR),
         }
     } else {
         kernel_params(m, n, k, MR, NR, core::mem::size_of::<T>())
@@ -305,7 +305,7 @@ pub unsafe fn gemm_basic_generic<
         match parallelism {
             Parallelism::None => 128 * NR,
             #[cfg(feature = "rayon")]
-            Parallelism::Rayon(_) => n.next_multiple_of(NR),
+            Parallelism::Rayon(_) => n.msrv_next_multiple_of(NR),
         }
     };
 
@@ -353,7 +353,7 @@ pub unsafe fn gemm_basic_generic<
         );
         let lhs_req = StackReq::new_aligned::<T>(
             if do_prepack_lhs {
-                packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+                packed_lhs_stride * (m.msrv_next_multiple_of(MR) / MR)
             } else {
                 0
             },
@@ -386,7 +386,7 @@ pub unsafe fn gemm_basic_generic<
             stack
                 .make_aligned_uninit::<T>(
                     if do_prepack_lhs {
-                        packed_lhs_stride * (m.next_multiple_of(MR) / MR)
+                        packed_lhs_stride * (m.msrv_next_multiple_of(MR) / MR)
                     } else {
                         0
                     },
@@ -469,7 +469,7 @@ pub unsafe fn gemm_basic_generic<
                 } else {
                     #[cfg(feature = "rayon")]
                     {
-                        let n_tasks = n_chunk.div_ceil(NR);
+                        let n_tasks = n_chunk.msrv_div_ceil(NR);
                         let base = n_tasks / n_threads;
                         let rem = n_tasks % n_threads;
 
@@ -700,8 +700,9 @@ pub unsafe fn gemm_basic_generic<
             } else {
                 #[cfg(feature = "std")]
                 let func = |tid: usize| {
-                    L2_SLAB.with_borrow_mut(|mem| {
-                        let stack = DynStack::new(mem);
+                    L2_SLAB.with(|mem| {
+                        let mut mem = mem.borrow_mut();
+                        let stack = DynStack::new(&mut mem);
                         let (mut packed_lhs_storage, _) = stack
                             .make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
                         let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);

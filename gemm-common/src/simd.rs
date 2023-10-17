@@ -1,4 +1,5 @@
 pub use bytemuck::Pod;
+#[cfg(feature = "f16")]
 use half::f16;
 pub use pulp::{cast, NullaryFnOnce};
 
@@ -24,6 +25,7 @@ impl Simd for Scalar {
     }
 }
 
+#[cfg(feature = "f16")]
 unsafe impl MixedSimd<f16, f16, f16, f32> for Scalar {
     const SIMD_WIDTH: usize = 1;
 
@@ -604,6 +606,7 @@ mod x86 {
         }
     }
 
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f32> for V3Half {
         const SIMD_WIDTH: usize = 4;
 
@@ -698,6 +701,7 @@ mod x86 {
         }
     }
 
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f32> for V3 {
         const SIMD_WIDTH: usize = 8;
 
@@ -1466,6 +1470,7 @@ mod x86 {
     }
 
     #[cfg(feature = "nightly")]
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f32> for V4 {
         const SIMD_WIDTH: usize = 16;
 
@@ -2016,6 +2021,7 @@ pub mod aarch64 {
         }
     }
 
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f32> for NeonFp16 {
         const SIMD_WIDTH: usize = 4;
 
@@ -2120,6 +2126,7 @@ pub mod aarch64 {
         }
     }
 
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f16> for NeonFp16 {
         const SIMD_WIDTH: usize = 8;
 
@@ -2224,6 +2231,7 @@ pub mod aarch64 {
         }
     }
 
+    #[cfg(feature = "f16")]
     unsafe impl MixedSimd<f16, f16, f16, f32> for Neon {
         const SIMD_WIDTH: usize = 4;
 
