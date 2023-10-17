@@ -35,7 +35,7 @@ std = [
   "gemm-f64/std",
   "gemm-c32/std",
   "gemm-c64/std",
-  "gemm-f16/std",
+  "gemm-f16?/std",
 ]
 nightly = [
   "gemm-common/nightly",
@@ -43,7 +43,7 @@ nightly = [
   "gemm-f64/nightly",
   "gemm-c32/nightly",
   "gemm-c64/nightly",
-  "gemm-f16/nightly",
+  "gemm-f16?/nightly",
 ]
 rayon = [
   "std",
@@ -52,7 +52,7 @@ rayon = [
   "gemm-f64/rayon",
   "gemm-c32/rayon",
   "gemm-c64/rayon",
-  "gemm-f16/rayon",
+  "gemm-f16?/rayon",
 ]
 wasm-simd128-enable = ["gemm-common/wasm-simd128-enable"]
 
