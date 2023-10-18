@@ -757,25 +757,25 @@ macro_rules! __inject_mod {
                 m: usize,
                 n: usize,
                 k: usize,
-                dst: *mut T,
+                dst: *mut $ty,
                 dst_cs: isize,
                 dst_rs: isize,
                 read_dst: bool,
-                lhs: *const T,
+                lhs: *const $ty,
                 lhs_cs: isize,
                 lhs_rs: isize,
-                rhs: *const T,
+                rhs: *const $ty,
                 rhs_cs: isize,
                 rhs_rs: isize,
-                alpha: T,
-                beta: T,
+                alpha: $ty,
+                beta: $ty,
                 conj_dst: bool,
                 conj_lhs: bool,
                 conj_rhs: bool,
                 parallelism: $crate::Parallelism,
             ) {
-                $crate::gemm::gemm_basic_generic::<_, T, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
-                    <$crate::simd::$simd as MixedSimd<T, T, T, T>>::try_new().unwrap(),
+                $crate::gemm::gemm_basic_generic::<_, $ty, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                    <$crate::simd::$simd as MixedSimd<$ty, $ty, $ty, $ty>>::try_new().unwrap(),
                     m,
                     n,
                     k,
@@ -970,7 +970,7 @@ macro_rules! gemm_def {
 
 #[macro_export]
 macro_rules! gemm_cplx_def {
-    ($ty: tt, $multiplier: expr) => {
+    ($ty: tt, $cplx_ty: tt, $multiplier: expr) => {
         type GemmCplxTy = unsafe fn(
             usize,
             usize,
@@ -1005,6 +1005,14 @@ macro_rules! gemm_cplx_def {
                 }
             }
 
+            #[cfg(target_arch = "aarch64")]
+            {
+                #[cfg(target_arch = "aarch64")]
+                if $crate::feature_detected!("neon") && $crate::feature_detected!("fcma") {
+                    return neonfcma::gemm_basic;
+                }
+            }
+
             scalar_cplx::gemm_basic_cplx
         }
 
@@ -1028,6 +1036,9 @@ macro_rules! gemm_cplx_def {
         }
 
         $crate::__inject_mod_cplx!(scalar, $ty, 1, Scalar);
+
+        #[cfg(target_arch = "aarch64")]
+        $crate::__inject_mod!(neonfcma, $cplx_ty, 1 * $multiplier, Scalar);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         $crate::__inject_mod_cplx!(fma, $ty, 2 * $multiplier, V3);
