@@ -2040,6 +2040,11 @@ pub mod aarch64 {
         __private: (),
     }
 
+    #[derive(Copy, Clone, Debug)]
+    pub struct NeonFcma {
+        __private: (),
+    }
+
     impl Simd for Neon {
         #[inline]
         #[target_feature(enable = "neon")]

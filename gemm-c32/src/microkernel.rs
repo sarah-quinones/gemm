@@ -266,3 +266,118 @@ pub mod avx512f {
         }
     }
 }
+
+#[cfg(target_arch = "aarch64")]
+pub mod neonfcma {
+    pub mod c32 {
+        use core::arch::{aarch64::*, asm};
+        use core::mem::transmute;
+
+        type T = num_complex::Complex32;
+        const N: usize = 2;
+        type Pack = [T; N];
+
+        #[inline(always)]
+        unsafe fn splat(value: T) -> Pack {
+            [value, value]
+        }
+
+        #[inline(always)]
+        unsafe fn add(lhs: Pack, rhs: Pack) -> Pack {
+            transmute(vaddq_f32(transmute(lhs), transmute(rhs)))
+        }
+
+        #[inline(always)]
+        unsafe fn conj(a: Pack) -> Pack {
+            [T::new(a[0].re, -a[0].im), T::new(a[1].re, -a[1].im)]
+        }
+
+        #[inline(always)]
+        unsafe fn mul_cplx(lhs: Pack, rhs: Pack) -> Pack {
+            mul_add_cplx(lhs, rhs, core::mem::zeroed(), false)
+        }
+
+        #[inline]
+        #[target_feature(enable = "neon,fcma")]
+        unsafe fn vcmlaq_0_f32(
+            mut acc: float32x4_t,
+            lhs: float32x4_t,
+            rhs: float32x4_t,
+        ) -> float32x4_t {
+            asm!(
+                "fcmla {0:v}.4s, {1:v}.4s, {2:v}.4s, 0",
+                inout(vreg) acc,
+                in(vreg) lhs,
+                in(vreg) rhs,
+                options(pure, nomem, nostack));
+            acc
+        }
+
+        #[inline]
+        #[target_feature(enable = "neon,fcma")]
+        unsafe fn vcmlaq_90_f32(
+            mut acc: float32x4_t,
+            lhs: float32x4_t,
+            rhs: float32x4_t,
+        ) -> float32x4_t {
+            asm!(
+                "fcmla {0:v}.4s, {1:v}.4s, {2:v}.4s, 90",
+                inout(vreg) acc,
+                in(vreg) lhs,
+                in(vreg) rhs,
+                options(pure, nomem, nostack));
+            acc
+        }
+
+        #[inline]
+        #[target_feature(enable = "neon,fcma")]
+        unsafe fn vcmlaq_270_f32(
+            mut acc: float32x4_t,
+            lhs: float32x4_t,
+            rhs: float32x4_t,
+        ) -> float32x4_t {
+            asm!(
+                "fcmla {0:v}.4s, {1:v}.4s, {2:v}.4s, 270",
+                inout(vreg) acc,
+                in(vreg) lhs,
+                in(vreg) rhs,
+                options(pure, nomem, nostack));
+            acc
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx(lhs: Pack, rhs: Pack, acc: Pack, conj_rhs: bool) -> Pack {
+            let _ = conj_rhs;
+            let lhs = transmute(lhs);
+            let rhs = transmute(rhs);
+            let acc = transmute(acc);
+
+            if conj_rhs {
+                transmute(vcmlaq_270_f32(vcmlaq_0_f32(acc, rhs, lhs), rhs, lhs))
+            } else {
+                transmute(vcmlaq_90_f32(vcmlaq_0_f32(acc, lhs, rhs), lhs, rhs))
+            }
+        }
+
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x1x1, 1, 1);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x1x2, 1, 2);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x1x3, 1, 3);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x1x4, 1, 4);
+
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x2x1, 2, 1);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x2x2, 2, 2);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x2x3, 2, 3);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x2x4, 2, 4);
+
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x3x1, 3, 1);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x3x2, 3, 2);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x3x3, 3, 3);
+        microkernel_cplx_packed!(["neon,fcma"], 4, cplx_x3x4, 3, 4);
+
+        microkernel_fn_array! {
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4,],
+        }
+    }
+}
