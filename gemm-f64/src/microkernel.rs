@@ -233,14 +233,11 @@ pub mod neon {
 
         #[cfg(miri)]
         unsafe fn vfmaq_f64(c: float64x2_t, a: float64x2_t, b: float64x2_t) -> float64x2_t {
-            let c: f64x2 = transmute(c);
-            let a: f64x2 = transmute(a);
-            let b: f64x2 = transmute(b);
+            let c: [f64; 2] = transmute(c);
+            let a: [f64; 2] = transmute(a);
+            let b: [f64; 2] = transmute(b);
 
-            transmute(f64x2(
-                f64::mul_add(a.0, b.0, c.0),
-                f64::mul_add(a.1, b.1, c.1),
-            ))
+            transmute([f64::mul_add(a[0], b[0], c[0]), f64::mul_add(a[1], b[1], c[1])])
         }
 
         #[inline(always)]
