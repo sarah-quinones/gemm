@@ -231,6 +231,20 @@ pub mod neon {
         use core::arch::aarch64::*;
         use core::mem::transmute;
 
+        #[cfg(miri)]
+        unsafe fn vfmaq_f32(c: float32x4_t, a: float32x4_t, b: float32x4_t) -> float32x4_t {
+            let c: f32x4 = transmute(c);
+            let a: f32x4 = transmute(a);
+            let b: f32x4 = transmute(b);
+
+            transmute(f32x4(
+                f32::mul_add(a.0, b.0, c.0),
+                f32::mul_add(a.1, b.1, c.1),
+                f32::mul_add(a.2, b.2, c.2),
+                f32::mul_add(a.3, b.3, c.3),
+            ))
+        }
+
         #[inline(always)]
         pub unsafe fn mul(lhs: Pack, rhs: Pack) -> Pack {
             transmute(vmulq_f32(transmute(lhs), transmute(rhs)))

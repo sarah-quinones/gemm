@@ -1,6 +1,6 @@
 [package]
 name = "gemm-f32"
-version = "0.16.12"
+version = "0.16.13"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
