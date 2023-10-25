@@ -332,7 +332,7 @@ pub fn kernel_params(
             (lhs_l2_assoc * l2_cache_bytes) / (l2_assoc * sizeof * auto_kc)
         };
 
-        let auto_mc = round_down(mc_from_lhs_l2_assoc(Ord::min(1, lhs_l2_assoc / 2)), mr);
+        let auto_mc = round_down(mc_from_lhs_l2_assoc(Ord::max(1, lhs_l2_assoc / 2)), mr);
         let m_iter = m.msrv_div_ceil(auto_mc);
         m.msrv_div_ceil(m_iter * mr) * mr
     };
