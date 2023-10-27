@@ -8,158 +8,65 @@ pub type c64 = num_complex::Complex64;
 #[allow(non_camel_case_types)]
 pub type f16 = gemm_f16::f16;
 
-pub trait GEMMType {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    );
+type GemmFn<T> = unsafe fn(
+    usize,
+    usize,
+    usize,
+    *mut T,
+    isize,
+    isize,
+    bool,
+    *const T,
+    isize,
+    isize,
+    *const T,
+    isize,
+    isize,
+    T,
+    T,
+    bool,
+    bool,
+    bool,
+    Parallelism,
+);
+
+pub trait GemmType {
+    fn get_gemm_fn() -> GemmFn<Self>;
 }
-impl GEMMType for f32 {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    ) {
+
+impl GemmType for f32 {
+    fn get_gemm_fn() -> GemmFn<Self> {
         gemm_f32::gemm::f32::get_gemm_fn()
     }
 }
-impl GEMMType for f64 {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    ) {
+
+impl GemmType for f64 {
+    fn get_gemm_fn() -> GemmFn<Self> {
         gemm_f64::gemm::f64::get_gemm_fn()
     }
 }
+
 #[cfg(feature = "f16")]
-impl GEMMType for f16 {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    ) {
+impl GemmType for f16 {
+    fn get_gemm_fn() -> GemmFn<Self> {
         gemm_f16::gemm::f16::get_gemm_fn()
     }
 }
-impl GEMMType for c32 {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    ) {
+
+impl GemmType for c32 {
+    fn get_gemm_fn() -> GemmFn<Self> {
         gemm_c32::gemm::f32::get_gemm_fn()
     }
 }
-impl GEMMType for c64 {
-    fn get_gemm_fn() -> unsafe fn(
-        usize,
-        usize,
-        usize,
-        *mut Self,
-        isize,
-        isize,
-        bool,
-        *const Self,
-        isize,
-        isize,
-        *const Self,
-        isize,
-        isize,
-        Self,
-        Self,
-        bool,
-        bool,
-        bool,
-        Parallelism,
-    ) {
+
+impl GemmType for c64 {
+    fn get_gemm_fn() -> GemmFn<Self> {
         gemm_c64::gemm::f64::get_gemm_fn()
     }
 }
 
 /// dst := alpha×dst + beta×lhs×rhs
-pub unsafe fn gemm<T: GEMMType + 'static>(
+pub unsafe fn gemm<T: GemmType + 'static>(
     m: usize,
     n: usize,
     k: usize,
