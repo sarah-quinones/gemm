@@ -17,7 +17,7 @@ num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
 paste = { workspace = true }
 
-gemm-common = { version = "0.16.14", default-features = false, path = "../gemm-common" }
+gemm-common = { version = "0.16.15", default-features = false, path = "../gemm-common" }
 
 [features]
 default = ["std", "rayon"]
