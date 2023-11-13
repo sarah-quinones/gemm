@@ -1,6 +1,6 @@
 [package]
 name = "gemm-c32"
-version = "0.16.14"
+version = "0.16.15"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
