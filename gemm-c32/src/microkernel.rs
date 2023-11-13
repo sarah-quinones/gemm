@@ -94,12 +94,20 @@ pub mod fma {
         }
 
         #[inline(always)]
+        unsafe fn neg(a: Pack) -> Pack {
+            const MASK: __m256 = unsafe { transmute([-0.0f32; 8]) };
+            transmute(_mm256_xor_ps(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
         unsafe fn conj(a: Pack) -> Pack {
-            const MASK: __m256 = unsafe {
-                transmute([
-                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
-                ])
-            };
+            const MASK: __m256 = unsafe { transmute([[0.0, -0.0_f32]; 4]) };
+            transmute(_mm256_xor_ps(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn neg_conj(a: Pack) -> Pack {
+            const MASK: __m256 = unsafe { transmute([[-0.0, 0.0_f32]; 4]) };
             transmute(_mm256_xor_ps(MASK, transmute(a)))
         }
 
@@ -118,6 +126,51 @@ pub mod fma {
         }
 
         #[inline(always)]
+        unsafe fn mul_add_cplx_step0(
+            a_re_im: Pack,
+            b_re: Pack,
+            c_re_im: Pack,
+            neg_conj_rhs: bool,
+        ) -> Pack {
+            if neg_conj_rhs {
+                transmute(_mm256_fmaddsub_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    transmute(c_re_im),
+                ))
+            } else {
+                transmute(_mm256_fmsubadd_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    transmute(c_re_im),
+                ))
+            }
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx_step1(
+            a_im_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            neg_conj_rhs: bool,
+        ) -> Pack {
+            if neg_conj_rhs {
+                transmute(_mm256_fmaddsub_ps(
+                    transmute(a_im_re),
+                    transmute(b_im),
+                    transmute(c_re_im),
+                ))
+            } else {
+                transmute(_mm256_fmsubadd_ps(
+                    transmute(a_im_re),
+                    transmute(b_im),
+                    transmute(c_re_im),
+                ))
+            }
+        }
+
+        #[inline(always)]
+        #[allow(dead_code)]
         unsafe fn mul_add_cplx(
             a_re_im: Pack,
             a_im_re: Pack,
@@ -141,19 +194,25 @@ pub mod fma {
             }
         }
 
-        microkernel_cplx!(["fma"], 2, cplx_x1x1, 1, 1);
-        microkernel_cplx!(["fma"], 2, cplx_x1x2, 1, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x1x1, 1, 1);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x1x2, 1, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x1x3, 1, 3);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x1x4, 1, 4);
 
-        microkernel_cplx!(["fma"], 2, cplx_x2x1, 2, 1);
-        microkernel_cplx!(["fma"], 2, cplx_x2x2, 2, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x2x1, 2, 1);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x2x2, 2, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x2x3, 2, 3);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x2x4, 2, 4);
 
-        microkernel_cplx!(["fma"], 2, cplx_x3x1, 3, 1);
-        microkernel_cplx!(["fma"], 2, cplx_x3x2, 3, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x3x1, 3, 1);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x3x2, 3, 2);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x3x3, 3, 3);
+        microkernel_cplx_2step!(["fma"], 2, cplx_x3x4, 3, 4);
 
         microkernel_cplx_fn_array! {
-            [cplx_x1x1, cplx_x1x2,],
-            [cplx_x2x1, cplx_x2x2,],
-            [cplx_x3x1, cplx_x3x2,],
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4,],
         }
     }
 }
@@ -183,13 +242,20 @@ pub mod avx512f {
         }
 
         #[inline(always)]
+        unsafe fn neg(a: Pack) -> Pack {
+            const MASK: __m512i = unsafe { transmute([-0.0f32; 16]) };
+            transmute(_mm512_xor_si512(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
         unsafe fn conj(a: Pack) -> Pack {
-            const MASK: __m512i = unsafe {
-                transmute([
-                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
-                    0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32, 0.0_f32, -0.0_f32,
-                ])
-            };
+            const MASK: __m512i = unsafe { transmute([[0.0, -0.0_f32]; 8]) };
+            transmute(_mm512_xor_si512(MASK, transmute(a)))
+        }
+
+        #[inline(always)]
+        unsafe fn neg_conj(a: Pack) -> Pack {
+            const MASK: __m512i = unsafe { transmute([[-0.0, 0.0_f32]; 8]) };
             transmute(_mm512_xor_si512(MASK, transmute(a)))
         }
 
@@ -221,6 +287,51 @@ pub mod avx512f {
         }
 
         #[inline(always)]
+        unsafe fn mul_add_cplx_step0(
+            a_re_im: Pack,
+            b_re: Pack,
+            c_re_im: Pack,
+            neg_conj_rhs: bool,
+        ) -> Pack {
+            if neg_conj_rhs {
+                transmute(_mm512_fmaddsub_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    transmute(c_re_im),
+                ))
+            } else {
+                transmute(subadd_ps(
+                    transmute(a_re_im),
+                    transmute(b_re),
+                    transmute(c_re_im),
+                ))
+            }
+        }
+
+        #[inline(always)]
+        unsafe fn mul_add_cplx_step1(
+            a_im_re: Pack,
+            b_im: Pack,
+            c_re_im: Pack,
+            neg_conj_rhs: bool,
+        ) -> Pack {
+            if neg_conj_rhs {
+                transmute(_mm512_fmaddsub_ps(
+                    transmute(a_im_re),
+                    transmute(b_im),
+                    transmute(c_re_im),
+                ))
+            } else {
+                transmute(subadd_ps(
+                    transmute(a_im_re),
+                    transmute(b_im),
+                    transmute(c_re_im),
+                ))
+            }
+        }
+
+        #[inline(always)]
+        #[allow(dead_code)]
         unsafe fn mul_add_cplx(
             a_re_im: Pack,
             a_im_re: Pack,
@@ -244,25 +355,37 @@ pub mod avx512f {
             }
         }
 
-        microkernel_cplx!(["avx512f"], 4, cplx_x1x1, 1, 1);
-        microkernel_cplx!(["avx512f"], 4, cplx_x1x2, 1, 2);
-        microkernel_cplx!(["avx512f"], 4, cplx_x1x3, 1, 3);
-        microkernel_cplx!(["avx512f"], 4, cplx_x1x4, 1, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x1, 1, 1);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x2, 1, 2);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x3, 1, 3);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x4, 1, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x5, 1, 5);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x6, 1, 6);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x7, 1, 7);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x1x8, 1, 8);
 
-        microkernel_cplx!(["avx512f"], 4, cplx_x2x1, 2, 1);
-        microkernel_cplx!(["avx512f"], 4, cplx_x2x2, 2, 2);
-        microkernel_cplx!(["avx512f"], 4, cplx_x2x3, 2, 3);
-        microkernel_cplx!(["avx512f"], 4, cplx_x2x4, 2, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x1, 2, 1);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x2, 2, 2);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x3, 2, 3);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x4, 2, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x5, 2, 5);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x6, 2, 6);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x7, 2, 7);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x2x8, 2, 8);
 
-        microkernel_cplx!(["avx512f"], 4, cplx_x3x1, 3, 1);
-        microkernel_cplx!(["avx512f"], 4, cplx_x3x2, 3, 2);
-        microkernel_cplx!(["avx512f"], 4, cplx_x3x3, 3, 3);
-        microkernel_cplx!(["avx512f"], 4, cplx_x3x4, 3, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x1, 3, 1);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x2, 3, 2);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x3, 3, 3);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x4, 3, 4);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x5, 3, 5);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x6, 3, 6);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x7, 3, 7);
+        microkernel_cplx_2step!(["avx512f"], 2, cplx_x3x8, 3, 8);
 
         microkernel_cplx_fn_array! {
-            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4,],
-            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4,],
-            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4,],
+            [cplx_x1x1, cplx_x1x2, cplx_x1x3, cplx_x1x4, cplx_x1x5, cplx_x1x6, cplx_x1x7, cplx_x1x8,],
+            [cplx_x2x1, cplx_x2x2, cplx_x2x3, cplx_x2x4, cplx_x2x5, cplx_x2x6, cplx_x2x7, cplx_x2x8,],
+            [cplx_x3x1, cplx_x3x2, cplx_x3x3, cplx_x3x4, cplx_x3x5, cplx_x3x6, cplx_x3x7, cplx_x3x8,],
         }
     }
 }

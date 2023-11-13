@@ -237,7 +237,10 @@ pub mod neon {
             let a: [f64; 2] = transmute(a);
             let b: [f64; 2] = transmute(b);
 
-            transmute([f64::mul_add(a[0], b[0], c[0]), f64::mul_add(a[1], b[1], c[1])])
+            transmute([
+                f64::mul_add(a[0], b[0], c[0]),
+                f64::mul_add(a[1], b[1], c[1]),
+            ])
         }
 
         #[inline(always)]

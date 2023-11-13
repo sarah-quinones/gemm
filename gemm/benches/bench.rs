@@ -302,6 +302,50 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 }
             }
         }
+
+        for (m, n, k) in mnks.iter().copied() {
+            let a_vec = vec![c32::default(); m * k];
+            let b_vec = vec![c32::default(); k * n];
+            let mut c_vec = vec![c32::default(); m * n];
+
+            for (dst_label, dst_cs, dst_rs) in [("n", m, 1), ("t", 1, n)] {
+                for (lhs_label, lhs_cs, lhs_rs) in [("n", m, 1), ("t", 1, k)] {
+                    for (rhs_label, rhs_cs, rhs_rs) in [("n", k, 1), ("t", 1, n)] {
+                        c.bench_function(
+                            &format!(
+                                "c32-{}{}{}-gemm-{}×{}×{}",
+                                dst_label, lhs_label, rhs_label, m, n, k
+                            ),
+                            |b| {
+                                b.iter(|| unsafe {
+                                    gemm(
+                                        m,
+                                        n,
+                                        k,
+                                        c_vec.as_mut_ptr(),
+                                        dst_cs as isize,
+                                        dst_rs as isize,
+                                        true,
+                                        a_vec.as_ptr(),
+                                        lhs_cs as isize,
+                                        lhs_rs as isize,
+                                        b_vec.as_ptr(),
+                                        rhs_cs as isize,
+                                        rhs_rs as isize,
+                                        c32::default(),
+                                        c32::default(),
+                                        false,
+                                        false,
+                                        false,
+                                        gemm::Parallelism::Rayon(0),
+                                    )
+                                })
+                            },
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
