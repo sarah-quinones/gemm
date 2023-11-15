@@ -11,6 +11,7 @@ keywords = ["linear-algebra"]
 
 [dependencies]
 raw-cpuid = { workspace = true }
+sysctl = { workspace = true, optional = true }
 seq-macro = { workspace = true }
 once_cell = { workspace = true, default-features = false, features = ["race", "alloc"] }
 dyn-stack = { workspace = true, default-features = false }
@@ -24,7 +25,7 @@ bytemuck = "1.14"
 
 [features]
 default = ["std", "rayon", "f16"]
-std = ["pulp/std", "dyn-stack/std", "once_cell/std"]
+std = ["pulp/std", "dyn-stack/std", "once_cell/std", "sysctl"]
 nightly = ["pulp/nightly"]
 wasm-simd128-enable = []
 rayon = ["dep:rayon", "std"]
