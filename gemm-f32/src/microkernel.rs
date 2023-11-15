@@ -332,10 +332,9 @@ pub mod neon {
         microkernel!(["neon"], 4, x4x8, 3, 8, 2, 4);
 
         microkernel_fn_array! {
-            [x1x1, x1x2, x1x3, x1x4, ],
-            [x2x1, x2x2, x2x3, x2x4, ],
-            [x3x1, x3x2, x3x3, x3x4, ],
-            [x4x1, x4x2, x4x3, x4x4, ],
+            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
+            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
+            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
         }
     }
 }
