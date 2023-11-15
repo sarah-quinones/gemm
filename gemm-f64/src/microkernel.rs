@@ -297,28 +297,16 @@ pub mod neon {
         microkernel!(["neon"], 2, x1x2, 1, 2, 1, 2);
         microkernel!(["neon"], 2, x1x3, 1, 3);
         microkernel!(["neon"], 2, x1x4, 1, 4, 2, 2);
-        microkernel!(["neon"], 2, x1x5, 1, 5);
-        microkernel!(["neon"], 2, x1x6, 1, 6, 3, 2);
-        microkernel!(["neon"], 2, x1x7, 1, 7);
-        microkernel!(["neon"], 2, x1x8, 1, 8, 4, 2);
 
         microkernel!(["neon"], 2, x2x1, 2, 1);
         microkernel!(["neon"], 2, x2x2, 2, 2, 1, 2);
         microkernel!(["neon"], 2, x2x3, 2, 3);
         microkernel!(["neon"], 2, x2x4, 2, 4, 2, 2);
-        microkernel!(["neon"], 2, x2x5, 2, 5);
-        microkernel!(["neon"], 2, x2x6, 2, 6, 3, 2);
-        microkernel!(["neon"], 2, x2x7, 2, 7);
-        microkernel!(["neon"], 2, x2x8, 2, 8, 4, 2);
 
         microkernel!(["neon"], 2, x3x1, 3, 1);
         microkernel!(["neon"], 2, x3x2, 3, 2, 1, 2);
         microkernel!(["neon"], 2, x3x3, 3, 3);
         microkernel!(["neon"], 2, x3x4, 3, 4, 2, 2);
-        microkernel!(["neon"], 2, x3x5, 3, 5);
-        microkernel!(["neon"], 2, x3x6, 3, 6, 3, 2);
-        microkernel!(["neon"], 2, x3x7, 3, 7);
-        microkernel!(["neon"], 2, x3x8, 3, 8, 4, 2);
 
         microkernel!(["neon"], 2, x4x1, 4, 1);
         microkernel!(["neon"], 2, x4x2, 4, 2, 1, 2);
@@ -326,9 +314,10 @@ pub mod neon {
         microkernel!(["neon"], 2, x4x4, 4, 4, 2, 2);
 
         microkernel_fn_array! {
-            [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6, x1x7, x1x8,],
-            [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6, x2x7, x2x8,],
-            [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6, x3x7, x3x8,],
+            [x1x1, x1x2, x1x3, x1x4, ],
+            [x2x1, x2x2, x2x3, x2x4, ],
+            [x3x1, x3x2, x3x3, x3x4, ],
+            [x4x1, x4x2, x4x3, x4x4, ],
         }
     }
 }
