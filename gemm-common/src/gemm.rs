@@ -336,7 +336,7 @@ pub unsafe fn gemm_basic_generic<
     let threading_threshold = get_threading_threshold();
 
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = m > get_rhs_packing_threshold() * MR;
+    let do_pack_rhs = true;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]

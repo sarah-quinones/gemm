@@ -58,6 +58,19 @@ pub mod neonfp16 {
             ))
         }
 
+        #[inline(always)]
+        pub unsafe fn load<const MR_DIV_N: usize>(dst: *mut Pack, ptr: *const half::f16) {
+            use core::arch::aarch64::*;
+            let ptr = ptr as *const f32;
+            match MR_DIV_N {
+                1 => *(dst as *mut [Pack; 1]) = transmute(vld1q_f32(ptr)),
+                2 => *(dst as *mut [Pack; 2]) = transmute(vld1q_f32_x2(ptr)),
+                3 => *(dst as *mut [Pack; 3]) = transmute(vld1q_f32_x3(ptr)),
+                4 => *(dst as *mut [Pack; 4]) = transmute(vld1q_f32_x4(ptr)),
+                _ => unreachable!(),
+            }
+        }
+
         microkernel!(["neon,fp16"], 2, x1x1, 1, 1);
         microkernel!(["neon,fp16"], 2, x1x2, 1, 2);
         microkernel!(["neon,fp16"], 2, x1x3, 1, 3);

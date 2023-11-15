@@ -204,20 +204,20 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
     CacheInfo {
         small_mc: false,
         associativity: 8,
-        cache_bytes: 16 * 1024, // 16KiB
+        cache_bytes: 128 * 1024, // 16KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
         small_mc: false,
         associativity: 8,
-        cache_bytes: 512 * 1024, // 512KiB
+        cache_bytes: 512 * 2 * 1024, // 512KiB
         cache_line_bytes: 64,
     },
     CacheInfo {
         small_mc: false,
-        associativity: 8,
-        cache_bytes: 1024 * 1024, // 1MiB
-        cache_line_bytes: 64,
+        associativity: 0,
+        cache_bytes: 0, // 1MiB
+        cache_line_bytes: 0,
     },
 ];
 

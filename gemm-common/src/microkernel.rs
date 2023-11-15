@@ -187,9 +187,11 @@ macro_rules! microkernel {
                         let packed_lhs = self.packed_lhs.wrapping_offset(iter as isize * self.lhs_cs);
                         let packed_rhs = self.packed_rhs.wrapping_offset(iter as isize * self.rhs_rs);
 
-                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
-                            *self.lhs.add(M_ITER) = *(packed_lhs.add(M_ITER * N) as *const Pack);
-                        }});
+			load::<$mr_div_n>(self.lhs, packed_lhs);
+
+                         // seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                         //     *self.lhs.add(M_ITER) = *(packed_lhs.add(M_ITER * N) as *const Pack);
+                         // }});
 
                         seq_macro::seq!(N_ITER0 in 0..$nr_div_n {{
                             *self.rhs = *(packed_rhs.wrapping_offset(N_ITER0 * $n) as *const Pack);
@@ -340,11 +342,7 @@ macro_rules! microkernel {
                 }
             };
 
-            if rhs_rs == 1 {
                 main_loop();
-            } else {
-                main_loop();
-            }
 
             if m == $mr_div_n * N && n == $nr && dst_rs == 1  {
                 let alpha = splat(alpha);
