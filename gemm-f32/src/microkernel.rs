@@ -346,9 +346,15 @@ pub mod amx {
         }
 
         microkernel_amx!(f32, ["neon"], 4, x1x16, 1, 16, 1, 16);
+        microkernel_amx!(f32, ["neon"], 4, x1x32, 1, 32, 2, 16);
+        microkernel_amx!(f32, ["neon"], 4, x2x16, 2, 16, 1, 16);
+        microkernel_amx!(f32, ["neon"], 4, x2x32, 2, 32, 2, 16);
 
         microkernel_fn_array! {
-            [x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,],
+            [
+                x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,
+                x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,
+            ],
         }
     }
 }

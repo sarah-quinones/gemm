@@ -45,6 +45,14 @@ nightly = [
   "gemm-c64/nightly",
   "gemm-f16?/nightly",
 ]
+experimental-apple-amx = [
+    "gemm-common/experimental-apple-amx",
+    "gemm-f32/experimental-apple-amx",
+    "gemm-f64/experimental-apple-amx",
+    "gemm-c32/experimental-apple-amx",
+    "gemm-c64/experimental-apple-amx",
+    "gemm-f16?/experimental-apple-amx",
+]
 rayon = [
   "std",
   "gemm-common/rayon",

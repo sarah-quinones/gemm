@@ -179,9 +179,9 @@ macro_rules! microkernel_amx {
                 ($col: expr, $x: expr, $y: expr, $z: expr) => {
                     __fma!(
                         $ty,
-                        (1 << 27)
+                        (1usize << 27)
+                        | (1usize << 37)
                         | ($col << 32)
-                        | (1 << 37)
                         | ($y << 6)
                         | ($x << 16)
                         | ($z << 20)
@@ -192,8 +192,8 @@ macro_rules! microkernel_amx {
                 ($col: expr, $x: expr, $y: expr, $z: expr) => {
                     __fma!(
                         $ty,
-                        ($col << 32)
-                        | (1 << 37)
+                        (1usize << 37)
+                        | ($col << 32)
                         | ($y << 6)
                         | ($x << 16)
                         | ($z << 20)
@@ -206,17 +206,25 @@ macro_rules! microkernel_amx {
             ldx!(packed_lhs, 0);
 
             let k_unroll = k / $unroll;
-            let k_leftover = k % $unroll;
+            let k_leftover = k % $unroll ;
 
             let mut depth = k_unroll;
             if depth != 0 {
                 loop {
                     seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
-                        ldx!(packed_lhs.offset(lhs_cs * UNROLL_ITER), UNROLL_ITER);
-                        ldy!(packed_rhs.offset(rhs_rs * UNROLL_ITER), UNROLL_ITER);
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            ldx!(packed_lhs.offset(lhs_cs * UNROLL_ITER + M_ITER * $n), UNROLL_ITER + $unroll * M_ITER);
+                        }});
+                        seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                            ldy!(packed_rhs.offset(rhs_rs * UNROLL_ITER + N_ITER * $n), UNROLL_ITER + $unroll * N_ITER);
+                        }});
                     }});
                     seq_macro::seq!(UNROLL_ITER in 0..$unroll {{
-                        fma!(UNROLL_ITER, UNROLL_ITER, 0);
+                        seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                            seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                                fma!(UNROLL_ITER + $unroll * M_ITER, UNROLL_ITER + $unroll * N_ITER, M_ITER + $mr_div_n * N_ITER);
+                            }});
+                        }});
                     }});
 
                     packed_lhs = packed_lhs.wrapping_offset($unroll * lhs_cs);
@@ -232,9 +240,17 @@ macro_rules! microkernel_amx {
             depth = k_leftover;
             if depth != 0 {
                 loop {
-                    ldx!(packed_lhs.offset(lhs_cs * 0), 0);
-                    ldy!(packed_rhs.offset(rhs_rs * 0), 0);
-                    fma!(0, 0, 0);
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        ldx!(packed_lhs.offset(lhs_cs * 0 + M_ITER * $n), 0 + $unroll * M_ITER);
+                    }});
+                    seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                        ldy!(packed_rhs.offset(rhs_rs * 0 + N_ITER * $n), 0 + $unroll * N_ITER);
+                    }});
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                            fma!($unroll * M_ITER, $unroll * N_ITER, M_ITER + $mr_div_n * N_ITER);
+                        }});
+                    }});
 
                     packed_lhs = packed_lhs.wrapping_offset(lhs_cs);
                     packed_rhs = packed_rhs.wrapping_offset(rhs_rs);
@@ -248,13 +264,24 @@ macro_rules! microkernel_amx {
             }
 
             let alpha_c = [alpha; $n];
-            let beta_c = [alpha; $n];
+            let beta_c = [beta; $n];
             ldy!(alpha_c.as_ptr(), 0);
             ldy!(beta_c.as_ptr(), 1);
 
-            for i in 0..16 {
-                extrx!(i * 4 + 0, 0);
-                mul_select!(i, 0, 1, 0);
+            let stride = 64 / N;
+
+            for i in 0..N {
+                seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                    seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                        // extrx!((i * stride + M_ITER + $mr_div_n * N_ITER), M_ITER + $mr_div_n * N_ITER);
+                    }});
+                }});
+                seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                    seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                        extrx!((i * stride + M_ITER + $mr_div_n * N_ITER), M_ITER + $mr_div_n * N_ITER);
+                        mul_select!(i, M_ITER + $mr_div_n * N_ITER, 1, i * stride + M_ITER + $mr_div_n * N_ITER);
+                    }});
+                }});
             }
 
             let mut tmp_dst = [::core::mem::MaybeUninit::<T>::uninit(); { $mr_div_n * $n * $nr }];
@@ -270,22 +297,43 @@ macro_rules! microkernel_amx {
                         *tmp_dst.offset(i as isize          + j as isize * tmp_dst_cs) =
                         *dst    .offset(i as isize * dst_rs + j as isize * dst_cs);
                     }
+                    for i in m..$mr_div_n * N {
+                        *tmp_dst.offset(i as isize          + j as isize * tmp_dst_cs) = ::core::mem::zeroed();
+                    }
                 }
             }
 
             if alpha_status == 0 {
-                for i in 0..16 {
-                    stz!(tmp_dst.offset(i as isize * dst_cs), i * 4 + 0);
+                for i in 0..N {
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                            stz!(
+                                tmp_dst.offset((i as isize + N_ITER * $n) * tmp_dst_cs + M_ITER * $n),
+                                (i * stride + M_ITER + $mr_div_n * N_ITER)
+                            );
+                        }});
+                    }});
                 }
             } else {
-                for i in 0..16 {
-                    ldx!(tmp_dst.offset(i as isize * dst_cs), 0);
-                    fma_select!(i, 0, 0, 0);
-                    stz!(tmp_dst.offset(i as isize * dst_cs), i * 4 + 0);
+                for i in 0..N {
+                    seq_macro::seq!(M_ITER in 0..$mr_div_n {{
+                        seq_macro::seq!(N_ITER in 0..$nr_div_n {{
+                            ldx!(
+                                tmp_dst.offset((i as isize + N_ITER * $n) * tmp_dst_cs + M_ITER * $n),
+                                M_ITER + $mr_div_n * N_ITER
+                            );
+                            // ldx!(tmp_dst.offset(i as isize * tmp_dst_cs), M_ITER + $mr_div_n * N_ITER);
+                            fma_select!(i, M_ITER + $mr_div_n * N_ITER, 0, i * stride + M_ITER + $mr_div_n * N_ITER);
+                            stz!(
+                                tmp_dst.offset((i as isize + N_ITER * $n) * tmp_dst_cs + M_ITER * $n),
+                                i * stride + M_ITER + $mr_div_n * N_ITER
+                            );
+                        }});
+                    }});
                 }
             }
 
-            if !(dst_rs == 1 && m == $mr_div_n * N) {
+            if !(dst_rs == 1 && m == $mr_div_n * N && n == $nr) {
                 for j in 0..n {
                     for i in 0..m {
                         *dst    .offset(i as isize * dst_rs + j as isize * dst_cs) =

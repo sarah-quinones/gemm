@@ -49,6 +49,27 @@ impl DivCeil for usize {
     }
 }
 
+#[cfg(target_vendor = "apple")]
+fn has_amx_impl() -> bool {
+    if !cfg!(miri) {
+        #[cfg(feature = "std")]
+        {
+            use sysctl::Ctl;
+            use sysctl::Sysctl;
+
+            if let Ok(brand) =
+                Ctl::new("machdep.cpu.brand_string").and_then(|ctl| ctl.value_string())
+            {
+                let mut words = brand.split_whitespace();
+                let apple = words.next();
+                let mx = words.next();
+                return apple == Some("Apple") && matches!(mx, Some("M1" | "M2" | "M3"));
+            }
+        }
+    }
+    false
+}
+
 fn cache_info() -> Option<[CacheInfo; 3]> {
     if !cfg!(miri) {
         #[cfg(feature = "std")]
@@ -431,6 +452,8 @@ static CACHE_INFO_DEFAULT: [CacheInfo; 3] = [
 ];
 
 pub struct CacheInfoDeref;
+#[cfg(target_vendor = "apple")]
+pub struct HasAmx;
 
 impl core::ops::Deref for CacheInfoDeref {
     type Target = [CacheInfo; 3];
@@ -450,6 +473,21 @@ impl core::ops::Deref for CacheInfoDeref {
                 once_cell::sync::OnceCell::new();
             CACHE_INFO.get_or_init(|| cache_info().unwrap_or(CACHE_INFO_DEFAULT))
         }
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+impl HasAmx {
+    #[inline]
+    pub fn get() -> bool {
+        static HAS_AMX: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(u8::MAX);
+        let mut has_amx = HAS_AMX.load(::core::sync::atomic::Ordering::Relaxed);
+        if has_amx == u8::MAX {
+            let b = has_amx_impl() as u8;
+            HAS_AMX.store(b, core::sync::atomic::Ordering::Relaxed);
+            has_amx = b;
+        }
+        has_amx != 0
     }
 }
 

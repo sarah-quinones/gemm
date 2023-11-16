@@ -329,9 +329,19 @@ pub mod amx {
         pub const N: usize = 8;
 
         microkernel_amx!(f64, ["neon"], 4, x1x8, 1, 8, 1, 8);
+        microkernel_amx!(f64, ["neon"], 4, x1x16, 1, 16, 2, 8);
+        microkernel_amx!(f64, ["neon"], 4, x2x8, 2, 8, 1, 8);
+        microkernel_amx!(f64, ["neon"], 4, x2x16, 2, 16, 2, 8);
 
         microkernel_fn_array! {
-            [x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,],
+            [
+                x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,
+                x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,
+            ],
+            [
+                x2x8,x2x8,x2x8,x2x8,x2x8,x2x8,x2x8,x2x8,
+                x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,
+            ],
         }
     }
 }

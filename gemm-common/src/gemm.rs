@@ -211,6 +211,7 @@ pub unsafe fn gemm_basic_generic<
     conj_rhs: bool,
     mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    requires_row_major_rhs: bool,
     parallelism: Parallelism,
 ) {
     if m == 0 || n == 0 {
@@ -342,8 +343,7 @@ pub unsafe fn gemm_basic_generic<
     let threading_threshold = get_threading_threshold();
 
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = m > get_rhs_packing_threshold() * MR;
-    let do_pack_rhs = true;
+    let do_pack_rhs = requires_row_major_rhs || m > get_rhs_packing_threshold() * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
@@ -463,6 +463,22 @@ pub unsafe fn gemm_basic_generic<
 
             if do_pack_rhs {
                 if n_threads <= 1 {
+                    // on aarch64 we want the registers to be fully initialized
+                    // for use with neon/amx
+                    #[cfg(target_arch = "aarch64")]
+                    pack_rhs::<T, N, NR, _>(
+                        simd,
+                        n_chunk,
+                        k_chunk,
+                        packed_rhs,
+                        rhs.wrapping_offset(
+                            depth_outer as isize * rhs_rs + col_outer as isize * rhs_cs,
+                        ),
+                        rhs_cs,
+                        rhs_rs,
+                        packed_rhs_stride,
+                    );
+                    #[cfg(not(target_arch = "aarch64"))]
                     pack_rhs::<T, 1, NR, _>(
                         simd,
                         n_chunk,
@@ -752,7 +768,7 @@ pub unsafe fn gemm_basic_generic<
 
 #[macro_export]
 macro_rules! __inject_mod {
-    ($module: ident, $ty: ident, $N: expr, $simd: ident) => {
+    ($module: ident, $ty: ident, $N: expr, $simd: ident, $requires_packed_rhs: expr) => {
         mod $module {
             use super::*;
             use crate::gemm_common::simd::MixedSimd;
@@ -803,6 +819,7 @@ macro_rules! __inject_mod {
                     conj_rhs,
                     |a, b, c| a * b + c,
                     &UKR,
+                    $requires_packed_rhs,
                     parallelism,
                 );
             }
@@ -864,6 +881,7 @@ macro_rules! __inject_mod_cplx {
                         conj_rhs,
                         |a, b, c| a * b + c,
                         &CPLX_UKR,
+                        false,
                         parallelism,
                         );
                 }
@@ -915,7 +933,11 @@ macro_rules! gemm_def {
             #[cfg(target_arch = "aarch64")]
             {
                 if $crate::feature_detected!("neon") {
-                    amx::gemm_basic
+                    #[cfg(feature = "experimental-apple-amx")]
+                    if $crate::cache::HasAmx::get() {
+                        return amx::gemm_basic;
+                    }
+                    neon::gemm_basic
                 } else {
                     scalar::gemm_basic
                 }
@@ -960,20 +982,21 @@ macro_rules! gemm_def {
             unsafe { ::core::mem::transmute(gemm_fn) }
         }
 
-        $crate::__inject_mod!(scalar, $ty, 1, Scalar);
+        $crate::__inject_mod!(scalar, $ty, 1, Scalar, false);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        $crate::__inject_mod!(fma, $ty, 4 * $multiplier, V3);
+        $crate::__inject_mod!(fma, $ty, 4 * $multiplier, V3, false);
         #[cfg(all(feature = "nightly", any(target_arch = "x86", target_arch = "x86_64")))]
-        $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, V4);
+        $crate::__inject_mod!(avx512f, $ty, 8 * $multiplier, V4, false);
 
         #[cfg(target_arch = "aarch64")]
-        $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar);
+        $crate::__inject_mod!(neon, $ty, 2 * $multiplier, Scalar, false);
         #[cfg(target_arch = "aarch64")]
-        $crate::__inject_mod!(amx, $ty, 8 * $multiplier, Scalar);
+        #[cfg(feature = "experimental-apple-amx")]
+        $crate::__inject_mod!(amx, $ty, 8 * $multiplier, Scalar, true);
 
         #[cfg(target_arch = "wasm32")]
-        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Scalar);
+        $crate::__inject_mod!(simd128, $ty, 2 * $multiplier, Scalar, false);
     };
 }
 
@@ -1047,7 +1070,7 @@ macro_rules! gemm_cplx_def {
         $crate::__inject_mod_cplx!(scalar, $ty, 1, Scalar);
 
         #[cfg(target_arch = "aarch64")]
-        $crate::__inject_mod!(neonfcma, $cplx_ty, 1 * $multiplier, Scalar);
+        $crate::__inject_mod!(neonfcma, $cplx_ty, 1 * $multiplier, Scalar, false);
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         $crate::__inject_mod_cplx!(fma, $ty, 2 * $multiplier, V3);
