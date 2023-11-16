@@ -324,6 +324,35 @@ pub mod neon {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+pub mod amx {
+    pub mod f32 {
+        pub type T = f32;
+        pub const N: usize = 16;
+
+        #[inline(always)]
+        pub unsafe fn scalar_mul(lhs: T, rhs: T) -> T {
+            lhs * rhs
+        }
+
+        #[inline(always)]
+        pub unsafe fn scalar_add(lhs: T, rhs: T) -> T {
+            lhs + rhs
+        }
+
+        #[inline(always)]
+        pub unsafe fn scalar_mul_add(a: T, b: T, c: T) -> T {
+            gemm_common::simd::neon_fmaf(a, b, c)
+        }
+
+        microkernel_amx!(f32, ["neon"], 4, x1x16, 1, 16, 1, 16);
+
+        microkernel_fn_array! {
+            [x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,x1x16,],
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub mod simd128 {
     pub mod f32 {

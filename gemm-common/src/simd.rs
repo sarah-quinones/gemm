@@ -1809,6 +1809,7 @@ pub mod aarch64 {
     use super::*;
     use core::arch::aarch64::*;
     use core::arch::asm;
+    #[allow(unused_imports)]
     use core::mem::transmute;
     use core::mem::MaybeUninit;
     use core::ptr;
