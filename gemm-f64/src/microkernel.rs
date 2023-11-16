@@ -322,6 +322,20 @@ pub mod neon {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+pub mod amx {
+    pub mod f64 {
+        pub type T = f64;
+        pub const N: usize = 8;
+
+        microkernel_amx!(f64, ["neon"], 4, x1x8, 1, 8, 1, 8);
+
+        microkernel_fn_array! {
+            [x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,x1x8,],
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub mod simd128 {
     pub mod f64 {

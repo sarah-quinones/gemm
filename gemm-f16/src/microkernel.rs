@@ -94,3 +94,17 @@ pub mod neonfp16 {
         }
     }
 }
+
+#[cfg(target_arch = "aarch64")]
+pub mod amx {
+    pub mod f64 {
+        pub type T = f64;
+        pub const N: usize = 32;
+
+        microkernel_amx!(f64, ["neon"], 4, x1x32, 1, 32, 1, 32);
+
+        microkernel_fn_array! {
+            [x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,x1x32,],
+        }
+    }
+}
