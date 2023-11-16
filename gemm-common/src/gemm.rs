@@ -914,7 +914,7 @@ macro_rules! gemm_def {
             #[cfg(target_arch = "aarch64")]
             {
                 if $crate::feature_detected!("neon") {
-                    neon::gemm_basic
+                    amx::gemm_basic
                 } else {
                     scalar::gemm_basic
                 }
