@@ -211,7 +211,7 @@ pub unsafe fn gemm_basic_generic<
     conj_rhs: bool,
     mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
-    requires_row_major_rhs: bool,
+    _requires_row_major_rhs: bool,
     parallelism: Parallelism,
 ) {
     if m == 0 || n == 0 {
@@ -343,7 +343,7 @@ pub unsafe fn gemm_basic_generic<
     let threading_threshold = get_threading_threshold();
 
     #[cfg(target_arch = "aarch64")]
-    let do_pack_rhs = requires_row_major_rhs || m > get_rhs_packing_threshold() * MR;
+    let do_pack_rhs = _requires_row_major_rhs || m > get_rhs_packing_threshold() * MR;
 
     // no need to pack if the lhs is already contiguous-ish
     #[cfg(not(target_arch = "aarch64"))]
