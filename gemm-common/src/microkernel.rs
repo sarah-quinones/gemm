@@ -111,7 +111,7 @@ macro_rules! microkernel_cplx_fn_array {
 #[macro_export]
 macro_rules! amx {
     ($op: tt, $gpr: expr) => {
-        ::core::arch::asm!(::core::concat!(".word (0x201000 + (", ::core::stringify!($op) ," << 5)") , in("x0")$gpr)
+        ::core::arch::asm!(::core::concat!(".word (0x201000 + (", ::core::stringify!($op) ," << 5))") , in("x0")$gpr)
     };
 }
 
