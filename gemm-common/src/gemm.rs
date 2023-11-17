@@ -517,6 +517,21 @@ pub unsafe fn gemm_basic_generic<
                             let j = col_inner / NR;
 
                             if ncols > 0 {
+                                #[cfg(target_arch = "aarch64")]
+                                pack_rhs::<T, N, NR, _>(
+                                    simd,
+                                    ncols,
+                                    k_chunk,
+                                    packed_rhs.wrapping_add(j * packed_rhs_stride),
+                                    rhs.wrapping_offset(
+                                        depth_outer as isize * rhs_rs
+                                            + (col_outer + col_inner) as isize * rhs_cs,
+                                    ),
+                                    rhs_cs,
+                                    rhs_rs,
+                                    packed_rhs_stride,
+                                );
+                                #[cfg(not(target_arch = "aarch64"))]
                                 pack_rhs::<T, 1, NR, _>(
                                     simd,
                                     ncols,
