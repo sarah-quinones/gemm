@@ -813,6 +813,10 @@ pub mod f16 {
         #[cfg(target_arch = "aarch64")]
         {
             if gemm_common::feature_detected!("neon") {
+                #[cfg(feature = "experimental-apple-amx")]
+                if gemm_common::cache::HasAmx::get() {
+                    return amx::gemm_basic;
+                }
                 if gemm_common::feature_detected!("fp16") {
                     neonfp16::gemm_basic
                 } else {
@@ -1003,6 +1007,66 @@ pub mod f16 {
                 false,
                 move |a, b, c| <NeonFp16 as MixedSimd<T, T, T, T>>::mult_add(simd, a, b, c),
                 &UKR,
+                false,
+                parallelism,
+            );
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[cfg(feature = "experimental-apple-amx")]
+    mod amx {
+        use crate::microkernel::amx::f16::*;
+        use gemm_common::simd::{MixedSimd, NeonFp16};
+        type T = half::f16;
+
+        #[inline(never)]
+        pub unsafe fn gemm_basic(
+            m: usize,
+            n: usize,
+            k: usize,
+            dst: *mut T,
+            dst_cs: isize,
+            dst_rs: isize,
+            read_dst: bool,
+            lhs: *const T,
+            lhs_cs: isize,
+            lhs_rs: isize,
+            rhs: *const T,
+            rhs_cs: isize,
+            rhs_rs: isize,
+            alpha: T,
+            beta: T,
+            _conj_dst: bool,
+            _conj_lhs: bool,
+            _conj_rhs: bool,
+            parallelism: gemm_common::Parallelism,
+        ) {
+            let simd = <NeonFp16 as MixedSimd<T, T, T, T>>::try_new().unwrap();
+
+            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                simd,
+                m,
+                n,
+                k,
+                dst,
+                dst_cs,
+                dst_rs,
+                read_dst,
+                lhs,
+                lhs_cs,
+                lhs_rs,
+                rhs,
+                rhs_cs,
+                rhs_rs,
+                alpha,
+                beta,
+                false,
+                false,
+                false,
+                move |a, b, c| <NeonFp16 as MixedSimd<T, T, T, T>>::mult_add(simd, a, b, c),
+                &UKR,
+                true,
                 parallelism,
             );
         }

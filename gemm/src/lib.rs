@@ -142,7 +142,120 @@ mod tests {
     }
 
     #[test]
-    fn test_gemm_real() {
+    fn test_gemm_f32() {
+        set_wasm_simd128(true);
+
+        let mut mnks = vec![];
+        mnks.push((63, 2, 10));
+        mnks.push((1, 2, 10));
+        mnks.push((1, 63, 10));
+
+        // large m to trigger parallelized rhs packing with big number of threads and small n
+        mnks.push((2048, 255, 255));
+
+        mnks.push((256, 256, 256));
+        mnks.push((4096, 4096, 4));
+        mnks.push((64, 64, 4));
+        mnks.push((0, 64, 4));
+        mnks.push((64, 0, 4));
+        mnks.push((0, 0, 4));
+        mnks.push((64, 64, 0));
+        mnks.push((16, 1, 1));
+        mnks.push((16, 2, 1));
+        mnks.push((16, 3, 1));
+        mnks.push((16, 4, 1));
+        mnks.push((16, 1, 2));
+        mnks.push((16, 2, 2));
+        mnks.push((16, 3, 2));
+        mnks.push((16, 4, 2));
+        mnks.push((16, 16, 1));
+        mnks.push((8, 16, 1));
+        mnks.push((16, 8, 1));
+        mnks.push((1, 1, 2));
+        mnks.push((4, 4, 4));
+        mnks.push((1024, 1024, 1));
+        mnks.push((1024, 1024, 4));
+        mnks.push((63, 1, 10));
+        mnks.push((63, 3, 10));
+        mnks.push((63, 4, 10));
+        mnks.push((2, 63, 10));
+        mnks.push((3, 63, 10));
+        mnks.push((4, 63, 10));
+
+        for (m, n, k) in mnks {
+            #[cfg(feature = "std")]
+            dbg!(m, n, k);
+            for parallelism in [
+                Parallelism::None,
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(0),
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(128),
+            ] {
+                for alpha in [0.0, 1.0, 2.3] {
+                    for beta in [0.0, 1.0, 2.3] {
+                        #[cfg(feature = "std")]
+                        dbg!(alpha, beta, parallelism);
+                        for colmajor in [true, false] {
+                            let a_vec: Vec<f32> = (0..(m * k)).map(|_| rand::random()).collect();
+                            let b_vec: Vec<f32> = (0..(k * n)).map(|_| rand::random()).collect();
+                            let mut c_vec: Vec<f32> =
+                                (0..(m * n)).map(|_| rand::random()).collect();
+                            let mut d_vec = c_vec.clone();
+
+                            unsafe {
+                                gemm::gemm(
+                                    m,
+                                    n,
+                                    k,
+                                    c_vec.as_mut_ptr(),
+                                    if colmajor { m } else { 1 } as isize,
+                                    if colmajor { 1 } else { n } as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                    false,
+                                    false,
+                                    false,
+                                    parallelism,
+                                );
+
+                                gemm::gemm_fallback(
+                                    m,
+                                    n,
+                                    k,
+                                    d_vec.as_mut_ptr(),
+                                    if colmajor { m } else { 1 } as isize,
+                                    if colmajor { 1 } else { n } as isize,
+                                    true,
+                                    a_vec.as_ptr(),
+                                    m as isize,
+                                    1,
+                                    b_vec.as_ptr(),
+                                    k as isize,
+                                    1,
+                                    alpha,
+                                    beta,
+                                );
+                            }
+                            for (c, d) in c_vec.iter().zip(d_vec.iter()) {
+                                assert_approx_eq::assert_approx_eq!(c, d, 1e-3);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_gemm_f64() {
         set_wasm_simd128(true);
 
         let mut mnks = vec![];

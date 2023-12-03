@@ -25,5 +25,6 @@ half = { workspace = true, default-features = false }
 [features]
 default = ["std", "rayon"]
 std = ["dyn-stack/std", "gemm-common/std", "gemm-f32/std"]
+experimental-apple-amx = ["std", "gemm-common/experimental-apple-amx", "gemm-f32/experimental-apple-amx"]
 nightly = ["gemm-common/nightly", "gemm-f32/nightly"]
 rayon = ["dep:rayon", "std", "gemm-common/rayon", "gemm-f32/rayon"]

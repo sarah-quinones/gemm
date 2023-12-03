@@ -7,6 +7,7 @@ once_cell = { version = "1.18", default-features = false }
 seq-macro = "0.3"
 paste = "1.0"
 raw-cpuid = { version = "10.7", default-features = false }
+sysctl = { version = "0.5.5" }
 dyn-stack = { version = "0.10", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 num-complex = { version = "0.4", default-features = false }
