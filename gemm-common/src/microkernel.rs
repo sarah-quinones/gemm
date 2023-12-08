@@ -115,6 +115,7 @@ macro_rules! amx {
     };
 }
 
+// Credit to RuQing Xu (https://github.com/xrq-phys/blis_apple) for the reference implementation.
 #[macro_export]
 macro_rules! microkernel_amx {
     ($ty: tt, $([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt , $nr_div_n: tt, $n: tt) => {
