@@ -119,7 +119,6 @@ macro_rules! amx {
 #[macro_export]
 macro_rules! microkernel_amx {
     ($ty: tt, $([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt , $nr_div_n: tt, $n: tt) => {
-        #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
         pub unsafe fn $name(
@@ -351,7 +350,6 @@ macro_rules! microkernel_amx {
 #[macro_export]
 macro_rules! microkernel {
     ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt $(, $nr_div_n: tt, $n: tt)?) => {
-        #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
         pub unsafe fn $name(
@@ -666,7 +664,6 @@ macro_rules! microkernel {
 #[macro_export]
 macro_rules! microkernel_cplx_2step {
     ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt) => {
-        #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
         pub unsafe fn $name(
@@ -1092,7 +1089,6 @@ macro_rules! microkernel_cplx_2step {
 #[macro_export]
 macro_rules! microkernel_cplx {
     ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt) => {
-        #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
         pub unsafe fn $name(
@@ -1475,7 +1471,6 @@ macro_rules! microkernel_cplx {
 #[macro_export]
 macro_rules! microkernel_cplx_packed {
     ($([$target: tt])?, $unroll: tt, $name: ident, $mr_div_n: tt, $nr: tt) => {
-        #[inline]
         $(#[target_feature(enable = $target)])?
         // 0, 1, or 2 for generic alpha
         pub unsafe fn $name(

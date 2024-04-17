@@ -340,7 +340,18 @@ pub unsafe fn gemm_basic_generic<
     };
 
     #[cfg(feature = "rayon")]
-    let threading_threshold = get_threading_threshold();
+    let threading_threshold = {
+        use core::any::TypeId;
+        let is_c32 = TypeId::of::<c32>() == TypeId::of::<T>();
+        let is_c64 = TypeId::of::<c64>() == TypeId::of::<T>();
+        if is_c32 {
+            get_threading_threshold() / 4
+        } else if is_c64 {
+            get_threading_threshold() / 16
+        } else {
+            get_threading_threshold()
+        }
+    };
 
     #[cfg(target_arch = "aarch64")]
     let do_pack_rhs = _requires_row_major_rhs || m > get_rhs_packing_threshold() * MR;
