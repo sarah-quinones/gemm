@@ -1,9 +1,13 @@
 use std::time::Duration;
 
 use aligned_vec::{avec, AVec};
-use diol::prelude::*;
+use diol::{
+    config::{MaxTime, MinTime},
+    prelude::*,
+};
 use gemm::*;
 use num_traits::One;
+use regex::Regex;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Layout {
@@ -34,7 +38,7 @@ fn make_data<T: Copy + One>(
 
 fn bench_gemm<T: One + Copy + 'static>(
     bencher: Bencher,
-    unlist![par, dst, lhs, rhs, m, n, k]: List![
+    list![par, dst, lhs, rhs, m, n, k]: List![
         Parallelism,
         Layout,
         Layout,
@@ -115,10 +119,10 @@ fn main() {
     let clap = Clap::parse();
     let mut config = BenchConfig::default();
     if let Some(name) = &clap.name {
-        config.fn_regex = Some(Regex::new(name).unwrap());
+        config.func_filter = Some(Regex::new(name).unwrap());
     }
     if let Some(arg) = &clap.arg {
-        config.arg_regex = Some(Regex::new(arg).unwrap());
+        config.arg_filter = Some(Regex::new(arg).unwrap());
     }
     config.min_time = MinTime(Duration::from_secs(1));
     config.max_time = MaxTime(Duration::from_secs(1));
@@ -133,7 +137,7 @@ fn main() {
 
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
-            bench.run();
+            bench.run().unwrap();
         }
     }
     {
@@ -141,7 +145,7 @@ fn main() {
         bench.register(bench_gemm::<f64>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
-            bench.run();
+            bench.run().unwrap();
         }
     }
     {
@@ -149,7 +153,7 @@ fn main() {
         bench.register(bench_gemm::<c32>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
-            bench.run();
+            bench.run().unwrap();
         }
     }
     {
@@ -157,7 +161,7 @@ fn main() {
         bench.register(bench_gemm::<c64>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
-            bench.run();
+            bench.run().unwrap();
         }
     }
 }
