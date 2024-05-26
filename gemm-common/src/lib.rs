@@ -32,9 +32,13 @@ pub mod gemm;
 pub mod gemv;
 pub mod gevv;
 
+pub mod horizontal_microkernel;
 pub mod microkernel;
+
 pub mod pack_operands;
 pub mod simd;
+
+pub use pulp;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Parallelism {

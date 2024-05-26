@@ -1,13 +1,7 @@
-use std::time::Duration;
-
 use aligned_vec::{avec, AVec};
-use diol::{
-    config::{MaxTime, MinTime},
-    prelude::*,
-};
+use diol::prelude::*;
 use gemm::*;
 use num_traits::One;
-use regex::Regex;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Layout {
@@ -93,6 +87,7 @@ fn args() -> Vec<List![Parallelism, Layout, Layout, Layout, usize, usize, usize]
         [].into_iter()
             .chain((5..13).map(pow2).map(|n| (n, n, n)))
             .chain((5..13).map(halfway).map(|n| (n, n, n)))
+            .chain((5..13).map(halfway).map(|n| (16, 16, n)))
             .sorted_unstable(),
         [Parallelism::Rayon(0), Parallelism::None],
         [Layout::Col, Layout::Row],
@@ -103,36 +98,15 @@ fn args() -> Vec<List![Parallelism, Layout, Layout, Layout, usize, usize, usize]
     .collect()
 }
 
-fn main() {
-    use clap::Parser;
-
-    #[derive(Parser, Debug)]
-    struct Clap {
-        #[arg(long)]
-        bench: bool,
-        #[arg(long)]
-        name: Option<String>,
-        #[arg(long)]
-        arg: Option<String>,
-    }
-
-    let clap = Clap::parse();
-    let mut config = BenchConfig::default();
-    if let Some(name) = &clap.name {
-        config.func_filter = Some(Regex::new(name).unwrap());
-    }
-    if let Some(arg) = &clap.arg {
-        config.arg_filter = Some(Regex::new(arg).unwrap());
-    }
-    config.min_time = MinTime(Duration::from_secs(1));
-    config.max_time = MaxTime(Duration::from_secs(1));
+fn main() -> std::io::Result<()> {
+    let config = BenchConfig::from_args()?;
 
     gemm::set_wasm_simd128(true);
 
     let modifiers = [1];
 
     {
-        let mut bench = Bench::new(config.clone());
+        let mut bench = Bench::new(&config);
         bench.register(bench_gemm::<f32>, args());
 
         for modifier in modifiers {
@@ -141,7 +115,7 @@ fn main() {
         }
     }
     {
-        let mut bench = Bench::new(config.clone());
+        let mut bench = Bench::new(&config);
         bench.register(bench_gemm::<f64>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
@@ -149,7 +123,7 @@ fn main() {
         }
     }
     {
-        let mut bench = Bench::new(config.clone());
+        let mut bench = Bench::new(&config);
         bench.register(bench_gemm::<c32>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
@@ -157,11 +131,12 @@ fn main() {
         }
     }
     {
-        let mut bench = Bench::new(config.clone());
+        let mut bench = Bench::new(&config);
         bench.register(bench_gemm::<c64>, args());
         for modifier in modifiers {
             gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
             bench.run().unwrap();
         }
     }
+    Ok(())
 }

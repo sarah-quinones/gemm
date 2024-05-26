@@ -53,6 +53,10 @@ pub mod scalar {
             [x1x1, x1x2, x1x3, x1x4,],
             [x2x1, x2x2, x2x3, x2x4,],
         }
+
+        pub const H_M: usize = 0;
+        pub const H_N: usize = 0;
+        pub const H_UKR: [[gemm_common::microkernel::HMicroKernelFn<T>; H_N]; H_M] = [];
     }
 }
 
@@ -64,6 +68,8 @@ pub mod fma {
         #[cfg(target_arch = "x86_64")]
         use core::arch::x86_64::*;
         use core::mem::transmute;
+
+        use gemm_common::pulp::u64x4;
 
         type T = f64;
         const N: usize = 4;
@@ -104,6 +110,31 @@ pub mod fma {
             gemm_common::simd::v3_fma(a, b, c)
         }
 
+        static U64_MASKS: [u64x4; 5] = [
+            u64x4(0, 0, 0, 0),
+            u64x4(!0, 0, 0, 0),
+            u64x4(!0, !0, 0, 0),
+            u64x4(!0, !0, !0, 0),
+            u64x4(!0, !0, !0, !0),
+        ];
+
+        #[inline(always)]
+        pub unsafe fn partial_load(ptr: *const T, len: usize) -> [T; N] {
+            transmute(_mm256_maskload_pd(
+                ptr,
+                transmute(*(U64_MASKS.as_ptr().add(len))),
+            ))
+        }
+
+        #[inline(always)]
+        pub unsafe fn reduce_sum(x: [T; N]) -> T {
+            let x: __m256d = transmute(x);
+            let x = _mm_add_pd(_mm256_castpd256_pd128(x), _mm256_extractf128_pd::<1>(x));
+            let hi = transmute(_mm_movehl_ps(transmute(x), transmute(x)));
+            let r = _mm_add_sd(x, hi);
+            _mm_cvtsd_f64(r)
+        }
+
         microkernel!(["fma"], 2, x1x1, 1, 1);
         microkernel!(["fma"], 2, x1x2, 1, 2);
         microkernel!(["fma"], 2, x1x3, 1, 3);
@@ -121,6 +152,15 @@ pub mod fma {
         microkernel_fn_array! {
             [x1x1, x1x2, x1x3, x1x4, x1x5, x1x6,],
             [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6,],
+        }
+
+        horizontal_kernel!(["fma"], hx1x1, 1, 1);
+        horizontal_kernel!(["fma"], hx1x2, 1, 2);
+        horizontal_kernel!(["fma"], hx2x1, 2, 1);
+        horizontal_kernel!(["fma"], hx2x2, 2, 2);
+        hmicrokernel_fn_array! {
+            [hx1x1, hx1x2,],
+            [hx2x1, hx2x2,],
         }
     }
 }
@@ -206,6 +246,56 @@ pub mod avx512f {
             [x2x1, x2x2, x2x3, x2x4, x2x5, x2x6,],
             [x3x1, x3x2, x3x3, x3x4, x3x5, x3x6,],
             [x4x1, x4x2, x4x3, x4x4, x4x5, x4x6,],
+        }
+
+        static U64_MASKS: [u8; 9] = [
+            0b00000000, //
+            0b00000001, //
+            0b00000011, //
+            0b00000111, //
+            0b00001111, //
+            0b00011111, //
+            0b00111111, //
+            0b01111111, //
+            0b11111111, //
+        ];
+
+        #[inline(always)]
+        pub unsafe fn partial_load(ptr: *const T, len: usize) -> [T; N] {
+            transmute(_mm512_maskz_loadu_pd(*(U64_MASKS.as_ptr().add(len)), ptr))
+        }
+
+        #[inline(always)]
+        pub unsafe fn reduce_sum(x: [T; N]) -> T {
+            let x = transmute(x);
+            let x = _mm256_add_pd(_mm512_castpd512_pd256(x), _mm512_extractf64x4_pd::<1>(x));
+            let x = _mm_add_pd(_mm256_castpd256_pd128(x), _mm256_extractf128_pd::<1>(x));
+            let hi = transmute(_mm_movehl_ps(transmute(x), transmute(x)));
+            let r = _mm_add_sd(x, hi);
+            _mm_cvtsd_f64(r)
+        }
+
+        horizontal_kernel!(["avx512f"], hx1x1, 1, 1);
+        horizontal_kernel!(["avx512f"], hx1x2, 1, 2);
+        horizontal_kernel!(["avx512f"], hx1x3, 1, 3);
+        horizontal_kernel!(["avx512f"], hx1x4, 1, 4);
+        horizontal_kernel!(["avx512f"], hx2x1, 2, 1);
+        horizontal_kernel!(["avx512f"], hx2x2, 2, 2);
+        horizontal_kernel!(["avx512f"], hx2x3, 2, 3);
+        horizontal_kernel!(["avx512f"], hx2x4, 2, 4);
+        horizontal_kernel!(["avx512f"], hx3x1, 3, 1);
+        horizontal_kernel!(["avx512f"], hx3x2, 3, 2);
+        horizontal_kernel!(["avx512f"], hx3x3, 3, 3);
+        horizontal_kernel!(["avx512f"], hx3x4, 3, 4);
+        horizontal_kernel!(["avx512f"], hx4x1, 4, 1);
+        horizontal_kernel!(["avx512f"], hx4x2, 4, 2);
+        horizontal_kernel!(["avx512f"], hx4x3, 4, 3);
+        horizontal_kernel!(["avx512f"], hx4x4, 4, 4);
+        hmicrokernel_fn_array! {
+            [hx1x1, hx1x2, hx1x3, hx1x4,],
+            [hx2x1, hx2x2, hx2x3, hx2x4,],
+            [hx3x1, hx3x2, hx3x3, hx3x4,],
+            [hx4x1, hx4x2, hx4x3, hx4x4,],
         }
     }
 }
@@ -319,6 +409,10 @@ pub mod neon {
             [x3x1, x3x2, x3x3, x3x4, ],
             [x4x1, x4x2, x4x3, x4x4, ],
         }
+
+        pub const H_M: usize = 0;
+        pub const H_N: usize = 0;
+        pub const H_UKR: [[gemm_common::microkernel::HMicroKernelFn<T>; H_N]; H_M] = [];
     }
 }
 
@@ -343,6 +437,10 @@ pub mod amx {
                 x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,x2x16,
             ],
         }
+
+        pub const H_M: usize = 0;
+        pub const H_N: usize = 0;
+        pub const H_UKR: [[gemm_common::microkernel::HMicroKernelFn<T>; H_N]; H_M] = [];
     }
 }
 
@@ -403,5 +501,9 @@ pub mod simd128 {
             [x2x1, x2x2, x2x3, x2x4,],
             [x3x1, x3x2, x3x3, x3x4,],
         }
+
+        pub const H_M: usize = 0;
+        pub const H_N: usize = 0;
+        pub const H_UKR: [[gemm_common::microkernel::HMicroKernelFn<T>; H_N]; H_M] = [];
     }
 }

@@ -184,11 +184,11 @@ pub unsafe fn gemm<T: 'static>(
         mut dst_cs,
         mut dst_rs,
         mut lhs,
-        lhs_cs,
+        mut lhs_cs,
         mut lhs_rs,
         mut rhs,
         mut rhs_cs,
-        rhs_rs,
+        mut rhs_rs,
         conj_lhs,
         conj_rhs,
     ) = if do_transpose {
@@ -213,6 +213,13 @@ pub unsafe fn gemm<T: 'static>(
         dst_cs = -dst_cs;
         rhs = rhs.wrapping_offset((n - 1) as isize * rhs_cs);
         rhs_cs = -rhs_cs;
+    }
+
+    if lhs_cs < 0 && k > 0 {
+        lhs = lhs.wrapping_offset((k - 1) as isize * lhs_cs);
+        lhs_cs = -lhs_cs;
+        rhs = rhs.wrapping_offset((k - 1) as isize * rhs_rs);
+        rhs_rs = -rhs_rs;
     }
 
     gemm_dispatch(
@@ -305,7 +312,13 @@ pub(crate) unsafe fn gemm_cplx_fallback<T>(
     conj_lhs: bool,
     conj_rhs: bool,
 ) where
-    T: num_traits::Zero + Send + Sync + Copy + num_traits::Num + core::ops::Neg<Output = T>,
+    T: num_traits::Zero
+        + Send
+        + Sync
+        + Copy
+        + num_traits::Num
+        + core::ops::Neg<Output = T>
+        + core::fmt::Debug,
     for<'a> &'a T: core::ops::Add<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Sub<&'a T, Output = T>,
     for<'a> &'a T: core::ops::Mul<&'a T, Output = T>,

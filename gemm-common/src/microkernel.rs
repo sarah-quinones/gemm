@@ -19,6 +19,23 @@ pub type MicroKernelFn<T> = unsafe fn(
     *const T,
 );
 
+pub type HMicroKernelFn<T> = unsafe fn(
+    k: usize,
+    dst: *mut T,
+    lhs: *const T,
+    rhs: *const T,
+    dst_cs: isize,
+    dst_rs: isize,
+    lhs_rs: isize,
+    rhs_cs: isize,
+    alpha: T,
+    beta: T,
+    alpha_status: u8,
+    _conj_dst: bool,
+    _conj_lhs: bool,
+    _conj_rhs: bool,
+);
+
 // microkernel_fn_array!{
 // [ a, b, c, ],
 // [ d, e, f, ],
@@ -94,6 +111,21 @@ macro_rules! microkernel_fn_array {
 }
 
 #[macro_export]
+macro_rules! hmicrokernel_fn_array {
+    ($([
+       $($ukr: ident,)*
+    ],)*) => {
+       pub const H_M: usize =
+           $crate::__microkernel_fn_array_helper!([$([$($ukr,)*],)*]);
+       pub const H_N: usize =
+           $crate::__microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
+
+        pub const H_UKR: [[$crate::microkernel::HMicroKernelFn<T>; H_N]; H_M] =
+            [ $([$($ukr,)*]),* ];
+    };
+}
+
+#[macro_export]
 macro_rules! microkernel_cplx_fn_array {
     ($([
        $($ukr: ident,)*
@@ -104,6 +136,21 @@ macro_rules! microkernel_cplx_fn_array {
            $crate::__microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
 
         pub const CPLX_UKR: [[$crate::microkernel::MicroKernelFn<num_complex::Complex<T>>; CPLX_NR]; CPLX_MR_DIV_N] =
+            [ $([$($ukr,)*]),* ];
+    };
+}
+
+#[macro_export]
+macro_rules! hmicrokernel_cplx_fn_array {
+    ($([
+       $($ukr: ident,)*
+    ],)*) => {
+       pub const H_CPLX_M: usize =
+           $crate::__microkernel_fn_array_helper!([$([$($ukr,)*],)*]);
+       pub const H_CPLX_N: usize =
+           $crate::__microkernel_fn_array_helper_nr!($([$($ukr,)*],)*);
+
+        pub const H_CPLX_UKR: [[$crate::microkernel::HMicroKernelFn<num_complex::Complex<T>>; H_CPLX_N]; H_CPLX_M] =
             [ $([$($ukr,)*]),* ];
     };
 }

@@ -985,7 +985,7 @@ pub mod f16 {
         ) {
             let simd = <NeonFp16 as MixedSimd<T, T, T, T>>::try_new().unwrap();
 
-            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N, 0, 0>(
                 simd,
                 m,
                 n,
@@ -1007,6 +1007,7 @@ pub mod f16 {
                 false,
                 move |a, b, c| <NeonFp16 as MixedSimd<T, T, T, T>>::mult_add(simd, a, b, c),
                 &UKR,
+                &[],
                 false,
                 parallelism,
             );
@@ -1044,7 +1045,7 @@ pub mod f16 {
         ) {
             let simd = <NeonFp16 as MixedSimd<T, T, T, T>>::try_new().unwrap();
 
-            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+            gemm_common::gemm::gemm_basic_generic::<_, _, N, { MR_DIV_N * N }, NR, MR_DIV_N, 0, 0>(
                 simd,
                 m,
                 n,
@@ -1066,6 +1067,7 @@ pub mod f16 {
                 false,
                 move |a, b, c| <NeonFp16 as MixedSimd<T, T, T, T>>::mult_add(simd, a, b, c),
                 &UKR,
+                &[],
                 true,
                 parallelism,
             );

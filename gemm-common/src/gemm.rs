@@ -1,7 +1,7 @@
 use crate::{
     cache::{kernel_params, DivCeil, KernelParams, CACHE_INFO},
     gemv, gevv,
-    microkernel::MicroKernelFn,
+    microkernel::{HMicroKernelFn, MicroKernelFn},
     pack_operands::{pack_lhs, pack_rhs},
     simd::MixedSimd,
     Parallelism, Ptr,
@@ -189,6 +189,8 @@ pub unsafe fn gemm_basic_generic<
     const MR: usize,
     const NR: usize,
     const MR_DIV_N: usize,
+    const H_M: usize,
+    const H_N: usize,
 >(
     simd: S,
     m: usize,
@@ -211,6 +213,7 @@ pub unsafe fn gemm_basic_generic<
     conj_rhs: bool,
     mul_add: impl Copy + Fn(T, T, T) -> T,
     dispatcher: &[[MicroKernelFn<T>; NR]; MR_DIV_N],
+    horizontal_dispatcher: &[[HMicroKernelFn<T>; H_N]; H_M],
     _requires_row_major_rhs: bool,
     parallelism: Parallelism,
 ) {
@@ -252,6 +255,59 @@ pub unsafe fn gemm_basic_generic<
                 }
             }
         }
+        return;
+    }
+
+    if (H_M > 0 && H_N > 0) && (!conj_dst && lhs_cs == 1 && rhs_rs == 1 && (m * n) <= 16 * 16) {
+        let kc = 1024;
+        let mut depth = 0;
+        let mut conj_dst = conj_dst;
+        while depth < k {
+            let kb = Ord::min(kc, k - depth);
+            let alpha_status = if alpha.is_zero() {
+                0
+            } else if alpha.is_one() {
+                1
+            } else {
+                2
+            };
+
+            let mut col = 0;
+            while col < n {
+                let nb = Ord::min(H_N, n - col);
+
+                let mut row = 0;
+                while row < m {
+                    let mb = Ord::min(H_M, m - row);
+
+                    horizontal_dispatcher[mb - 1][nb - 1](
+                        kb,
+                        dst.wrapping_offset(dst_rs * row as isize + dst_cs * col as isize),
+                        lhs.wrapping_offset(lhs_rs * row as isize + depth as isize),
+                        rhs.wrapping_offset(rhs_cs * col as isize + depth as isize),
+                        dst_cs,
+                        dst_rs,
+                        lhs_rs,
+                        rhs_cs,
+                        alpha,
+                        beta,
+                        alpha_status,
+                        conj_dst,
+                        conj_lhs,
+                        conj_rhs,
+                    );
+
+                    row += mb;
+                }
+
+                col += nb;
+            }
+
+            alpha = T::one();
+            conj_dst = false;
+            depth += kb;
+        }
+
         return;
     }
 
@@ -823,7 +879,16 @@ macro_rules! __inject_mod {
                 conj_rhs: bool,
                 parallelism: $crate::Parallelism,
             ) {
-                $crate::gemm::gemm_basic_generic::<_, $ty, N, { MR_DIV_N * N }, NR, MR_DIV_N>(
+                $crate::gemm::gemm_basic_generic::<
+                    _,
+                    $ty,
+                    N,
+                    { MR_DIV_N * N },
+                    NR,
+                    MR_DIV_N,
+                    H_M,
+                    H_N,
+                >(
                     <$crate::simd::$simd as MixedSimd<$ty, $ty, $ty, $ty>>::try_new().unwrap(),
                     m,
                     n,
@@ -845,6 +910,7 @@ macro_rules! __inject_mod {
                     conj_rhs,
                     |a, b, c| a * b + c,
                     &UKR,
+                    &H_UKR,
                     $requires_packed_rhs,
                     parallelism,
                 );
@@ -885,7 +951,7 @@ macro_rules! __inject_mod_cplx {
                     conj_rhs: bool,
                     parallelism: $crate::Parallelism,
                     ) {
-                    $crate::gemm::gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N>(
+                    $crate::gemm::gemm_basic_generic::<_, _, N, { CPLX_MR_DIV_N * N }, CPLX_NR, CPLX_MR_DIV_N, H_CPLX_M, H_CPLX_N>(
                         <$crate::simd::$simd as MixedSimd<T, T, T, T>>::try_new().unwrap(),
                         m,
                         n,
@@ -907,6 +973,7 @@ macro_rules! __inject_mod_cplx {
                         conj_rhs,
                         |a, b, c| a * b + c,
                         &CPLX_UKR,
+                        &H_CPLX_UKR,
                         false,
                         parallelism,
                         );
