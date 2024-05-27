@@ -203,7 +203,7 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
                             if level == 3 {
                                 shared_count = 1;
                             }
-                            if level > 0 {
+                            if level > 0 && level < 4 {
                                 if cache_info.cache_line_bytes
                                     >= all_info[level - 1].cache_line_bytes
                                 {
