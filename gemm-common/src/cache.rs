@@ -203,7 +203,7 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
                             if level == 3 {
                                 shared_count = 1;
                             }
-                            if level > 0 {
+                            if level > 0 && level < 4 {
                                 if cache_info.cache_line_bytes
                                     >= all_info[level - 1].cache_line_bytes
                                 {
@@ -248,14 +248,16 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
                                 ] {
                                     if let "Data" | "Unified" = cache_type {
                                         let level = level.parse::<usize>().unwrap();
-                                        let ways = ways.parse::<usize>().unwrap();
-                                        let coherency_size =
-                                            coherency_size.parse::<usize>().unwrap();
-                                        let one_size = one_size.parse::<usize>().unwrap();
+                                        if level > 0 && level < 4 {
+                                            let ways = ways.parse::<usize>().unwrap();
+                                            let coherency_size =
+                                                coherency_size.parse::<usize>().unwrap();
+                                            let one_size = one_size.parse::<usize>().unwrap();
 
-                                        info[level - 1].associativity = ways;
-                                        info[level - 1].cache_line_bytes = coherency_size;
-                                        info[level - 1].cache_bytes = one_size;
+                                            info[level - 1].associativity = ways;
+                                            info[level - 1].cache_line_bytes = coherency_size;
+                                            info[level - 1].cache_bytes = one_size;
+                                        }
                                     }
                                 }
                             }
