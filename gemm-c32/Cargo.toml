@@ -1,6 +1,6 @@
 [package]
 name = "gemm-c32"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2021"
 authors = ["sarah <>"]
 description = "Playground for matrix multiplication algorithms"
@@ -17,7 +17,7 @@ num-traits = { workspace = true, default-features = false }
 num-complex = { workspace = true, default-features = false }
 paste = { workspace = true }
 
-gemm-common = { version = "0.18.0", default-features = false, path = "../gemm-common" }
+gemm-common = { version = "0.18.1", default-features = false, path = "../gemm-common" }
 
 [features]
 default = ["std", "rayon"]
