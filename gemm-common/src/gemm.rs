@@ -7,7 +7,6 @@ use crate::{
     Parallelism, Ptr,
 };
 use core::sync::atomic::{AtomicUsize, Ordering};
-use dyn_stack::GlobalMemBuffer;
 use dyn_stack::{DynStack, StackReq};
 #[cfg(feature = "f16")]
 use half::f16;
@@ -58,7 +57,7 @@ pub const CACHELINE_ALIGN: usize = {
 
 #[cfg(feature = "std")]
 thread_local! {
-    pub static L2_SLAB: core::cell::RefCell<GlobalMemBuffer> = core::cell::RefCell::new(GlobalMemBuffer::new(
+    pub static L2_SLAB: core::cell::RefCell<dyn_stack::MemBuffer> = core::cell::RefCell::new(dyn_stack::MemBuffer::new(
         StackReq::new_aligned::<u8>(CACHE_INFO[1].cache_bytes, CACHELINE_ALIGN)
     ));
 }
@@ -435,13 +434,13 @@ pub unsafe fn gemm_basic_generic<
             },
             simd_align,
         );
-        Some(GlobalMemBuffer::new(rhs_req.and(lhs_req)))
+        Some(dyn_stack::MemBuffer::new(rhs_req.and(lhs_req)))
     } else {
         None
     };
 
     #[cfg(not(feature = "std"))]
-    let mut l2_slab = GlobalMemBuffer::new(StackReq::new_aligned::<T>(
+    let mut l2_slab = dyn_stack::MemBuffer::new(StackReq::new_aligned::<T>(
         packed_lhs_stride * (mc / MR),
         simd_align,
     ));
@@ -810,7 +809,7 @@ pub unsafe fn gemm_basic_generic<
                     L2_SLAB.with(|mem| {
                         let mut mem = mem.borrow_mut();
                         let stack = DynStack::new(&mut mem);
-                        let (mut packed_lhs_storage, _) = stack
+                        let (packed_lhs_storage, _) = stack
                             .make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
                         let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
                         func(tid, packed_lhs);

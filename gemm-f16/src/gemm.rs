@@ -1,4 +1,4 @@
-use dyn_stack::{DynStack, GlobalMemBuffer, StackReq};
+use dyn_stack::{DynStack, MemBuffer, StackReq};
 #[cfg(feature = "std")]
 use gemm_common::gemm::L2_SLAB;
 #[cfg(feature = "rayon")]
@@ -409,18 +409,18 @@ pub unsafe fn gemm_basic_generic<
         simd_align,
     );
 
-    let mut mem = GlobalMemBuffer::new(rhs_req.and(lhs_req));
+    let mut mem = MemBuffer::new(rhs_req.and(lhs_req));
     #[cfg(not(feature = "std"))]
-    let mut l2_slab = GlobalMemBuffer::new(StackReq::new_aligned::<f32>(
+    let mut l2_slab = MemBuffer::new(StackReq::new_aligned::<f32>(
         packed_lhs_stride * (mc / MR),
         simd_align,
     ));
 
     let stack = DynStack::new(&mut mem);
-    let (mut packed_rhs_storage, stack) =
+    let (packed_rhs_storage, stack) =
         stack.make_aligned_uninit::<f32>(packed_rhs_stride * (nc / NR), simd_align);
 
-    let mut packed_lhs_storage = stack
+    let packed_lhs_storage = stack
         .make_aligned_uninit::<f32>(
             if do_prepack_lhs {
                 packed_lhs_stride * (m.msrv_next_multiple_of(MR) / MR)
@@ -733,7 +733,7 @@ pub unsafe fn gemm_basic_generic<
                     L2_SLAB.with(|mem| {
                         let mut mem = mem.borrow_mut();
                         let stack = DynStack::new(&mut mem);
-                        let (mut packed_lhs_storage, _) = stack
+                        let (packed_lhs_storage, _) = stack
                             .make_aligned_uninit::<f32>(packed_lhs_stride * (mc / MR), simd_align);
                         let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut f32);
                         func(tid, packed_lhs);
