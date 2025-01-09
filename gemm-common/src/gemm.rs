@@ -819,7 +819,7 @@ pub unsafe fn gemm_basic_generic<
                 #[cfg(not(feature = "std"))]
                 let mut func = |tid: usize| {
                     let stack = DynStack::new(&mut l2_slab);
-                    let (mut packed_lhs_storage, _) =
+                    let (packed_lhs_storage, _) =
                         stack.make_aligned_uninit::<T>(packed_lhs_stride * (mc / MR), simd_align);
                     let packed_lhs = Ptr(packed_lhs_storage.as_mut_ptr() as *mut T);
                     func(tid, packed_lhs);
