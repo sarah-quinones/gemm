@@ -295,7 +295,10 @@ fn cache_info() -> Option<[CacheInfo; 3]> {
             }
         }
 
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(any(
+            all(target_arch = "x86", not(target_env = "sgx"), target_feature = "sse"),
+            all(target_arch = "x86_64", not(target_env = "sgx"))
+        ))]
         {
             use raw_cpuid::CpuId;
             let cpuid = CpuId::new();
