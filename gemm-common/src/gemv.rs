@@ -1,4 +1,7 @@
 use core::slice::from_raw_parts_mut;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 
 use num_traits::{One, Zero};
 use seq_macro::seq;
@@ -321,6 +324,17 @@ pub unsafe fn mixed_gemv_colmajor<
     }
 }
 
+struct FakeSync<T>(pub T);
+unsafe impl<T> Sync for FakeSync<T> {}
+
+impl<T> std::ops::Deref for FakeSync<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 // lhs is rowmajor
 // rhs is colmajor
 // n is small
@@ -418,7 +432,15 @@ pub unsafe fn mixed_gemv_rowmajor<
                     let k_lane = k / lane * lane;
                     let k_lane8 = k / lane8 * lane8;
 
-                    for row in 0..m {
+                    let rhs_sync = FakeSync(rhs);
+                    let lhs_sync = FakeSync(lhs);
+                    let dst_sync = FakeSync(dst);
+
+                    let call_inner = |row: usize| {
+                        let dst = *dst_sync;
+                        let rhs = *rhs_sync;
+                        let lhs = *lhs_sync;
+
                         let lhs = lhs.wrapping_offset(row as isize * lhs_rs);
 
                         let mut depth = 0;
@@ -548,7 +570,11 @@ pub unsafe fn mixed_gemv_rowmajor<
                                     simd.mult(simd.from_dst(*dst), alpha),
                                 ));
                         }
-                    }
+                    };
+
+                    let _ = (0..m).into_par_iter().with_min_len(128).for_each(|row| {
+                        call_inner(row);
+                    });
                 }
             }
         }
