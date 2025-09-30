@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.dependencies]
 once_cell = { version = "1.18", default-features = false }
 seq-macro = "0.3"
-paste = "1.0"
+paste = { package = "pastey", version = "0.1.1" }
 raw-cpuid = { version = "11.2", default-features = false }
 sysctl = "0.6.0"
 dyn-stack = { version = "0.13", default-features = false, features = ["alloc"] }
