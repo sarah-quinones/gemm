@@ -347,6 +347,80 @@ pub unsafe fn gemm_basic_generic<
         let alpha = simd.from_dst(alpha);
         let beta = simd.from_dst(beta);
         if n <= 1 && lhs_rs == 1 && dst_rs == 1 {
+            // Parallel GEMV (colmajor): split by k so each thread reads a
+            // contiguous block of the weight matrix.
+            #[cfg(feature = "rayon")]
+            if let Parallelism::Rayon(n_threads) = parallelism {
+                let n_threads = if n_threads == 0 {
+                    rayon::current_num_threads()
+                } else {
+                    n_threads
+                };
+                let n_threads = n_threads.min(8).min(k / 256).max(1);
+                if n_threads > 1 {
+                    let chunk = (k + n_threads - 1) / n_threads;
+                    let scratch_size = m * (n_threads - 1);
+                    let mut scratch = vec![T::ZERO; scratch_size];
+                    let scratch_ptr = scratch.as_mut_ptr() as usize;
+                    let dst_addr = dst as usize;
+                    let lhs_addr = lhs as usize;
+                    let rhs_addr = rhs as usize;
+                    let zero = <f32 as num_traits::Zero>::zero();
+
+                    rayon::scope(|s| {
+                        for tid in 0..n_threads {
+                            let k_start = tid * chunk;
+                            let k_end = (k_start + chunk).min(k);
+                            if k_start >= k_end {
+                                continue;
+                            }
+                            let k_len = k_end - k_start;
+
+                            s.spawn(move |_| unsafe {
+                                let lhs_chunk = (lhs_addr as *const T)
+                                    .wrapping_offset(k_start as isize * lhs_cs);
+                                let rhs_chunk = (rhs_addr as *const T)
+                                    .wrapping_offset(k_start as isize * rhs_rs);
+                                if tid == 0 {
+                                    gemv::mixed_gemv_colmajor(
+                                        simd,
+                                        m,
+                                        n,
+                                        k_len,
+                                        dst_addr as *mut T,
+                                        dst_cs,
+                                        dst_rs,
+                                        lhs_chunk,
+                                        lhs_cs,
+                                        lhs_rs,
+                                        rhs_chunk,
+                                        rhs_cs,
+                                        rhs_rs,
+                                        alpha,
+                                        beta,
+                                    );
+                                } else {
+                                    let buf = (scratch_ptr as *mut T).wrapping_add((tid - 1) * m);
+                                    gemv::mixed_gemv_colmajor(
+                                        simd, m, n, k_len, buf, 0, 1, lhs_chunk, lhs_cs, lhs_rs,
+                                        rhs_chunk, rhs_cs, rhs_rs, zero, beta,
+                                    );
+                                }
+                            });
+                        }
+                    });
+
+                    let dst_slice = unsafe { core::slice::from_raw_parts_mut(dst, m) };
+                    for t in 0..(n_threads - 1) {
+                        let buf =
+                            unsafe { core::slice::from_raw_parts(scratch.as_ptr().add(t * m), m) };
+                        for i in 0..m {
+                            dst_slice[i] = dst_slice[i] + buf[i];
+                        }
+                    }
+                    return;
+                }
+            }
             gemv::mixed_gemv_colmajor(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
                 alpha, beta,
@@ -354,6 +428,59 @@ pub unsafe fn gemm_basic_generic<
             return;
         }
         if n <= 1 && lhs_cs == 1 && rhs_rs == 1 {
+            // Parallel GEMV (rowmajor): split by m (output rows).
+            #[cfg(feature = "rayon")]
+            if let Parallelism::Rayon(n_threads) = parallelism {
+                let n_threads = if n_threads == 0 {
+                    rayon::current_num_threads()
+                } else {
+                    n_threads
+                };
+                let n_threads = n_threads.min(8).min(m / 64).max(1);
+                if n_threads > 1 {
+                    let chunk = (m + n_threads - 1) / n_threads;
+                    let dst_addr = dst as usize;
+                    let lhs_addr = lhs as usize;
+                    let rhs_addr = rhs as usize;
+
+                    rayon::scope(|s| {
+                        for tid in 0..n_threads {
+                            let row_start = tid * chunk;
+                            let row_end = (row_start + chunk).min(m);
+                            if row_start >= row_end {
+                                continue;
+                            }
+                            let chunk_m = row_end - row_start;
+
+                            s.spawn(move |_| unsafe {
+                                let lhs_chunk = (lhs_addr as *const T)
+                                    .wrapping_offset(row_start as isize * lhs_rs);
+                                let dst_chunk = (dst_addr as *mut T)
+                                    .wrapping_offset(row_start as isize * dst_rs);
+
+                                gemv::mixed_gemv_rowmajor(
+                                    simd,
+                                    chunk_m,
+                                    n,
+                                    k,
+                                    dst_chunk,
+                                    dst_cs,
+                                    dst_rs,
+                                    lhs_chunk,
+                                    lhs_cs,
+                                    lhs_rs,
+                                    rhs_addr as *const T,
+                                    rhs_cs,
+                                    rhs_rs,
+                                    alpha,
+                                    beta,
+                                );
+                            });
+                        }
+                    });
+                    return;
+                }
+            }
             gemv::mixed_gemv_rowmajor(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
                 alpha, beta,
@@ -362,6 +489,58 @@ pub unsafe fn gemm_basic_generic<
         }
 
         if m <= 1 && rhs_cs == 1 && dst_cs == 1 {
+            // Parallel GEMV (m<=1 colmajor): split by n (output columns).
+            #[cfg(feature = "rayon")]
+            if let Parallelism::Rayon(n_threads) = parallelism {
+                let n_threads = if n_threads == 0 {
+                    rayon::current_num_threads()
+                } else {
+                    n_threads
+                };
+                let n_threads = n_threads.min(8).min(n / 64).max(1);
+                if n_threads > 1 {
+                    let chunk = (n + n_threads - 1) / n_threads;
+                    let dst_addr = dst as usize;
+                    let rhs_addr = rhs as usize;
+                    let lhs_addr = lhs as usize;
+
+                    rayon::scope(|s| {
+                        for tid in 0..n_threads {
+                            let col_start = tid * chunk;
+                            let col_end = (col_start + chunk).min(n);
+                            if col_start >= col_end {
+                                continue;
+                            }
+                            let chunk_n = col_end - col_start;
+
+                            s.spawn(move |_| unsafe {
+                                let dst_c = (dst_addr as *mut T)
+                                    .wrapping_offset(col_start as isize * dst_rs);
+                                let rhs_c = (rhs_addr as *const T)
+                                    .wrapping_offset(col_start as isize * rhs_rs);
+                                gemv::mixed_gemv_colmajor(
+                                    simd,
+                                    chunk_n,
+                                    m,
+                                    k,
+                                    dst_c,
+                                    dst_rs,
+                                    dst_cs,
+                                    rhs_c,
+                                    rhs_rs,
+                                    rhs_cs,
+                                    lhs_addr as *const T,
+                                    lhs_rs,
+                                    lhs_cs,
+                                    alpha,
+                                    beta,
+                                );
+                            });
+                        }
+                    });
+                    return;
+                }
+            }
             gemv::mixed_gemv_colmajor(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
                 alpha, beta,
@@ -369,6 +548,57 @@ pub unsafe fn gemm_basic_generic<
             return;
         }
         if m <= 1 && rhs_rs == 1 && lhs_cs == 1 {
+            // Parallel GEMV (m<=1 rowmajor): split by n (output columns).
+            #[cfg(feature = "rayon")]
+            if let Parallelism::Rayon(n_threads) = parallelism {
+                let n_threads = if n_threads == 0 {
+                    rayon::current_num_threads()
+                } else {
+                    n_threads
+                };
+                let n_threads = n_threads.min(8).min(n / 64).max(1);
+                if n_threads > 1 {
+                    let chunk = (n + n_threads - 1) / n_threads;
+                    let dst_addr = dst as usize;
+                    let rhs_addr = rhs as usize;
+                    let lhs_addr = lhs as usize;
+
+                    rayon::scope(|s| {
+                        for tid in 0..n_threads {
+                            let col_start = tid * chunk;
+                            let col_end = (col_start + chunk).min(n);
+                            if col_start >= col_end {
+                                continue;
+                            }
+                            let chunk_n = col_end - col_start;
+
+                            s.spawn(move |_| unsafe {
+                                let dst_c = (dst_addr as *mut T)
+                                    .wrapping_offset(col_start as isize * dst_rs);
+                                let rhs_c = (rhs_addr as *const T).wrapping_add(col_start);
+                                gemv::mixed_gemv_rowmajor(
+                                    simd,
+                                    chunk_n,
+                                    m,
+                                    k,
+                                    dst_c,
+                                    dst_rs,
+                                    dst_cs,
+                                    rhs_c,
+                                    rhs_rs,
+                                    rhs_cs,
+                                    lhs_addr as *const T,
+                                    lhs_rs,
+                                    lhs_cs,
+                                    alpha,
+                                    beta,
+                                );
+                            });
+                        }
+                    });
+                    return;
+                }
+            }
             gemv::mixed_gemv_rowmajor(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
                 alpha, beta,
