@@ -1945,6 +1945,7 @@ pub mod aarch64 {
 
     /// Floating point multiplication
     /// [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FMUL--vector-)
+    #[target_feature(enable = "fp16,neon")]
     #[inline]
     pub unsafe fn vmulq_f16(a: float16x8_t, b: float16x8_t) -> float16x8_t {
         let result: float16x8_t;
@@ -1959,6 +1960,7 @@ pub mod aarch64 {
 
     /// Floating point addition
     /// [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FADD--vector-)
+    #[target_feature(enable = "fp16,neon")]
     #[inline]
     pub unsafe fn vaddq_f16(a: float16x8_t, b: float16x8_t) -> float16x8_t {
         let result: float16x8_t;
@@ -1972,6 +1974,7 @@ pub mod aarch64 {
     }
 
     /// Fused multiply add [doc](https://developer.arm.com/documentation/dui0801/g/A64-SIMD-Vector-Instructions/FMLA--vector-)
+    #[target_feature(enable = "fp16,neon")]
     #[inline]
     pub unsafe fn vfmaq_f16(mut a: float16x8_t, b: float16x8_t, c: float16x8_t) -> float16x8_t {
         asm!(
@@ -1989,58 +1992,17 @@ pub mod aarch64 {
         b: float16x8_t,
         c: float16x8_t,
     ) -> float16x8_t {
-        match LANE {
-            0 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[0]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            1 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[1]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            2 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[2]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            3 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[3]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            4 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[4]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            5 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[5]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            6 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[6]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            7 => asm!(
-                "fmla {0:v}.8h, {1:v}.8h, {2:v}.h[7]",
-                inout(vreg) a,
-                in(vreg) b,
-                in(vreg_low16) c,
-                options(pure, nomem, nostack)),
-            _ => unreachable!(),
-        }
-        a
+        // Broadcast element LANE of c across all lanes, then regular FMLA.
+        // Uses only FEAT_FP16 instructions — no indexed FMLA (FEAT_FP16FML) required.
+        let lane: float16x8_t;
+        asm!(
+            "dup {0:v}.8h, {1:v}.h[{2}]",
+            out(vreg) lane,
+            in(vreg) c,
+            const LANE,
+            options(pure, nomem, nostack)
+        );
+        vfmaq_f16(a, b, lane)
     }
 
     #[derive(Copy, Clone, Debug)]
