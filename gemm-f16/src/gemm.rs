@@ -454,20 +454,41 @@ pub unsafe fn gemm_basic_generic<
                 2
             };
 
+            // number of independent micro-kernel tiles available in this panel
+            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
+
+            let mut n_jobs = 0;
+            let mut row_outer = 0;
+            while row_outer != m {
+                let mut m_chunk = mc.min(m - row_outer);
+                if m_chunk > N && !do_prepack_lhs {
+                    m_chunk = m_chunk / N * N;
+                }
+                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
+                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
+                row_outer += m_chunk;
+            }
+
             let n_threads = match parallelism {
                 Parallelism::None => 1,
                 #[cfg(feature = "rayon")]
                 Parallelism::Rayon(n_threads) => {
-                    let threading_threshold = get_threading_threshold();
-                    let total_work = (m * n_chunk).saturating_mul(k_chunk);
-                    if total_work < threading_threshold {
+                    // gate on the per-panel work
+                    let panel_work = (m * n_chunk).saturating_mul(k_chunk);
+                    if panel_work < get_threading_threshold() {
                         1
                     } else {
-                        if n_threads == 0 {
+                        let max_threads = if n_threads == 0 {
                             rayon::current_num_threads()
                         } else {
                             n_threads
-                        }
+                        };
+                        // scale the thread count with the workload
+                        // per-thread unit is half the gate (internal)
+                        let work_per_thread = (get_threading_threshold() / 2).max(1);
+                        let total_work = (m * n_chunk).saturating_mul(k);
+                        let work_threads = (total_work / work_per_thread).max(1);
+                        work_threads.min(max_threads).min(n_jobs).max(1)
                     }
                 }
             };
@@ -546,22 +567,6 @@ pub unsafe fn gemm_basic_generic<
                     packed_lhs_stride,
                 );
             }
-
-            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
-
-            let mut n_jobs = 0;
-            let mut row_outer = 0;
-            while row_outer != m {
-                let mut m_chunk = mc.min(m - row_outer);
-                if m_chunk > N && !do_prepack_lhs {
-                    m_chunk = m_chunk / N * N;
-                }
-                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
-                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
-                row_outer += m_chunk;
-            }
-
-            // use a single thread for small workloads
 
             let func = move |tid, packed_lhs: Ptr<f32>| {
                 let min_jobs_per_thread = n_jobs / n_threads;

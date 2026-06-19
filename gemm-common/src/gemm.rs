@@ -399,14 +399,19 @@ pub unsafe fn gemm_basic_generic<
         use core::any::TypeId;
         let is_c32 = TypeId::of::<c32>() == TypeId::of::<T>();
         let is_c64 = TypeId::of::<c64>() == TypeId::of::<T>();
-        if is_c32 {
-            get_threading_threshold() / 4
+        let scale = if is_c32 {
+            4
         } else if is_c64 {
-            get_threading_threshold() / 16
+            16
         } else {
-            get_threading_threshold()
-        }
+            1
+        };
+        get_threading_threshold() / scale
     };
+    // scaling unit: work each extra thread should get once parallel. derived as
+    // half the gate so the gate behaves as a `serial -> 2-thread` step
+    #[cfg(feature = "rayon")]
+    let work_per_thread = (threading_threshold / 2).max(1);
 
     #[cfg(target_arch = "aarch64")]
     let do_pack_rhs = _requires_row_major_rhs || m > get_rhs_packing_threshold() * MR;
@@ -508,15 +513,33 @@ pub unsafe fn gemm_basic_generic<
                 2
             };
 
+            // number of independent micro-kernel tiles available in this panel
+            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
+
+            let mut n_jobs = 0;
+            let mut row_outer = 0;
+            while row_outer != m {
+                let mut m_chunk = mc.min(m - row_outer);
+                if m_chunk > N && !do_prepack_lhs {
+                    m_chunk = m_chunk / N * N;
+                }
+                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
+                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
+                row_outer += m_chunk;
+            }
+
             let n_threads = match parallelism {
                 Parallelism::None => 1,
                 #[cfg(feature = "rayon")]
                 Parallelism::Rayon(_) => {
-                    let total_work = (m * n_chunk).saturating_mul(k_chunk);
-                    if total_work < threading_threshold {
+                    let panel_work = (m * n_chunk).saturating_mul(k_chunk);
+                    if panel_work < threading_threshold {
                         1
                     } else {
-                        max_threads
+                        // scale the thread count with the workload instead of jumping straight to `max_threads`
+                        let total_work = (m * n_chunk).saturating_mul(k);
+                        let work_threads = (total_work / work_per_thread).max(1);
+                        work_threads.min(max_threads).min(n_jobs).max(1)
                     }
                 }
             };
@@ -633,20 +656,6 @@ pub unsafe fn gemm_basic_generic<
                     lhs_rs,
                     packed_lhs_stride,
                 );
-            }
-
-            let n_col_mini_chunks = (n_chunk + (NR - 1)) / NR;
-
-            let mut n_jobs = 0;
-            let mut row_outer = 0;
-            while row_outer != m {
-                let mut m_chunk = mc.min(m - row_outer);
-                if m_chunk > N && !do_prepack_lhs {
-                    m_chunk = m_chunk / N * N;
-                }
-                let n_row_mini_chunks = (m_chunk + (MR - 1)) / MR;
-                n_jobs += n_col_mini_chunks * n_row_mini_chunks;
-                row_outer += m_chunk;
             }
 
             let func = move |tid, packed_lhs: Ptr<T>| {

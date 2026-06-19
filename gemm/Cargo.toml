@@ -82,3 +82,7 @@ getrandom = { version = "0.2", features = ["js"] }
 [[bench]]
 name = "bench"
 harness = false
+
+[[bench]]
+name = "thread_scaling"
+harness = false
