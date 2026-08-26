@@ -88,6 +88,18 @@ fn args() -> Vec<List![Parallelism, Layout, Layout, Layout, usize, usize, usize]
             .chain((5..13).map(pow2).map(|n| (n, n, n)))
             .chain((5..13).map(halfway).map(|n| (n, n, n)))
             .chain((5..13).map(halfway).map(|n| (16, 16, n)))
+            .chain([
+                // gemv: row-vector times matrix
+                (1, 4096, 4096),
+                (1, 1024, 4096),
+                (1, 14336, 4096),
+                (1, 4096, 14336),
+                // gemv: matrix times column-vector
+                (4096, 1, 4096),
+                (14336, 1, 4096),
+                // short output, long depth: exercises the k-split fallback
+                (1, 128, 16384),
+            ])
             .sorted_unstable(),
         [Parallelism::Rayon(0), Parallelism::None],
         [Layout::Col, Layout::Row],
@@ -104,6 +116,15 @@ fn main() -> std::io::Result<()> {
     gemm::set_wasm_simd128(true);
 
     let modifiers = [1];
+
+    {
+        let mut bench = Bench::new(&config);
+        bench.register(bench_gemm::<f16>, args());
+        for modifier in modifiers {
+            gemm::set_threading_threshold(gemm::DEFAULT_THREADING_THRESHOLD / modifier);
+            bench.run().unwrap();
+        }
+    }
 
     {
         let mut bench = Bench::new(&config);

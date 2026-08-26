@@ -347,31 +347,31 @@ pub unsafe fn gemm_basic_generic<
         let alpha = simd.from_dst(alpha);
         let beta = simd.from_dst(beta);
         if n <= 1 && lhs_rs == 1 && dst_rs == 1 {
-            gemv::mixed_gemv_colmajor(
+            gemv::mixed_gemv_colmajor_parallel(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-                alpha, beta,
+                alpha, beta, parallelism,
             );
             return;
         }
         if n <= 1 && lhs_cs == 1 && rhs_rs == 1 {
-            gemv::mixed_gemv_rowmajor(
+            gemv::mixed_gemv_rowmajor_parallel(
                 simd, m, n, k, dst, dst_cs, dst_rs, lhs, lhs_cs, lhs_rs, rhs, rhs_cs, rhs_rs,
-                alpha, beta,
+                alpha, beta, parallelism,
             );
             return;
         }
 
         if m <= 1 && rhs_cs == 1 && dst_cs == 1 {
-            gemv::mixed_gemv_colmajor(
+            gemv::mixed_gemv_colmajor_parallel(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
-                alpha, beta,
+                alpha, beta, parallelism,
             );
             return;
         }
         if m <= 1 && rhs_rs == 1 && lhs_cs == 1 {
-            gemv::mixed_gemv_rowmajor(
+            gemv::mixed_gemv_rowmajor_parallel(
                 simd, n, m, k, dst, dst_rs, dst_cs, rhs, rhs_rs, rhs_cs, lhs, lhs_rs, lhs_cs,
-                alpha, beta,
+                alpha, beta, parallelism,
             );
             return;
         }

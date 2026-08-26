@@ -58,6 +58,10 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
+        // gemv shapes above the threading threshold. k is kept modest because the
+        // f16 fallback accumulates in f16.
+        mnks.push((1, 2048, 384));
+        mnks.push((2048, 1, 384));
         for (m, n, k) in mnks {
             #[cfg(feature = "std")]
             dbg!(m, n, k);
@@ -65,6 +69,8 @@ mod tests {
                 Parallelism::None,
                 #[cfg(feature = "rayon")]
                 Parallelism::Rayon(0),
+                #[cfg(feature = "rayon")]
+                Parallelism::Rayon(128),
             ] {
                 for alpha in [0.0, 1.0, 2.3] {
                     for beta in [0.0, 1.0, 2.3] {
@@ -181,6 +187,10 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
+        // gemv shapes above the threading threshold. depth is kept short so the f32
+        // accumulation stays within the fixed absolute tolerance used below.
+        mnks.push((1, 8192, 128));
+        mnks.push((8192, 1, 128));
         for (m, n, k) in mnks {
             #[cfg(feature = "std")]
             dbg!(m, n, k);
@@ -294,6 +304,12 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
+        // gemv shapes above the threading threshold: the first two split the output
+        // dimension, the last two are short-output/long-depth and take the k-split.
+        mnks.push((1, 1024, 1024));
+        mnks.push((1024, 1, 1024));
+        mnks.push((1, 128, 8192));
+        mnks.push((128, 1, 8192));
         for (m, n, k) in mnks {
             #[cfg(feature = "std")]
             dbg!(m, n, k);
@@ -400,6 +416,10 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
+        // gemv shapes above the threading threshold. depth is kept short so the f32
+        // accumulation stays within the fixed absolute tolerance used below.
+        mnks.push((1, 8192, 128));
+        mnks.push((8192, 1, 128));
         for (m, n, k) in mnks {
             #[cfg(feature = "std")]
             dbg!(m, n, k);
@@ -522,6 +542,12 @@ mod tests {
         mnks.push((3, 63, 10));
         mnks.push((4, 63, 10));
 
+        // gemv shapes above the threading threshold: the first two split the output
+        // dimension, the last two are short-output/long-depth and take the k-split.
+        mnks.push((1, 1024, 1024));
+        mnks.push((1024, 1, 1024));
+        mnks.push((1, 128, 8192));
+        mnks.push((128, 1, 8192));
         for (m, n, k) in mnks {
             #[cfg(feature = "std")]
             dbg!(m, n, k);
