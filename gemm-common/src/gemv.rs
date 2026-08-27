@@ -324,6 +324,10 @@ pub unsafe fn mixed_gemv_colmajor<
 // lhs is rowmajor
 // rhs is colmajor
 // n is small
+// the depth loop is unrolled 8 ways and each lane's offset is written as `lane * i` for
+// i in 0..8 so the eight blocks read identically; clippy objects to the `* 0` and `* 1`
+// that fall out of that symmetry.
+#[allow(clippy::erasing_op, clippy::identity_op)]
 #[inline(always)]
 pub unsafe fn mixed_gemv_rowmajor<
     Lhs: Boilerplate + One + Zero,

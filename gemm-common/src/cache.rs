@@ -519,6 +519,20 @@ pub fn kernel_params(
     nr: usize,
     sizeof: usize,
 ) -> KernelParams {
+    kernel_params_with(*CACHE_INFO, m, n, k, mr, nr, sizeof)
+}
+
+/// `kernel_params` with the cache geometry passed in rather than read from the global, so
+/// the blocking arithmetic can be tested against architectures the host is not.
+fn kernel_params_with(
+    info: [CacheInfo; 3],
+    m: usize,
+    n: usize,
+    k: usize,
+    mr: usize,
+    nr: usize,
+    sizeof: usize,
+) -> KernelParams {
     if m == 0 || n == 0 || k == 0 {
         return KernelParams {
             kc: k,
@@ -526,8 +540,6 @@ pub fn kernel_params(
             nc: n,
         };
     }
-
-    let info = *CACHE_INFO;
 
     let l1_cache_bytes = info[0].cache_bytes.max(32 * 1024);
     let l2_cache_bytes = info[1].cache_bytes;
@@ -560,7 +572,10 @@ pub fn kernel_params(
     let gcd = gcd(mr * sizeof, l1_line_bytes * l1_n_sets);
     let kc_0 = (l1_line_bytes * l1_n_sets) / gcd;
     let c_lhs = (mr * sizeof) / gcd;
-    let c_rhs = (nr * kc_0 * sizeof) / (l1_line_bytes * l1_n_sets);
+    // `c_rhs` counts associativity ways occupied by the B micropanel, per the model stated
+    // above (`C_A + C_B <= l1_assoc`), so it must round up. truncating models B as taking
+    // zero ways whenever it is narrower than one way, which doubles `kc`.
+    let c_rhs = (nr * kc_0 * sizeof).msrv_div_ceil(l1_line_bytes * l1_n_sets);
     let kc_multiplier = l1_assoc / (c_lhs + c_rhs);
     // let auto_kc = kc_0 * kc_multiplier;
     let auto_kc = (kc_0 * kc_multiplier.next_power_of_two()).max(512).min(k);
@@ -608,5 +623,51 @@ pub fn kernel_params(
         kc: auto_kc,
         mc: auto_mc,
         nc: auto_nc,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(l1: usize, l2: usize, l3: usize) -> [CacheInfo; 3] {
+        // assoc 8 / line 64 are what the Apple and default paths actually leave in place
+        [
+            CacheInfo { associativity: 8, cache_bytes: l1, cache_line_bytes: 64 },
+            CacheInfo { associativity: 8, cache_bytes: l2, cache_line_bytes: 64 },
+            CacheInfo { associativity: 8, cache_bytes: l3, cache_line_bytes: 64 },
+        ]
+    }
+
+    /// `c_rhs` counts associativity ways taken by the B micropanel, so it rounds up. When it
+    /// truncated, any machine with L1d > 32 KiB got double the intended `kc`: on an Apple
+    /// M5 P-core (128 KiB L1d) f32 neon that was kc = 2048, making the A micropanel
+    /// `MR*kc*4` = 128 KiB — the entire L1d, with nothing left for B — and the per-thread
+    /// packed lhs 1 MiB, which alone exhausts the 6-core E cluster's 6 MiB shared L2.
+    #[test]
+    fn kc_fits_l1_on_large_l1_machines() {
+        // Apple M5 P-core, f32 neon: MR = MR_DIV_N * N = 4 * 4 = 16, NR = 4
+        let p = kernel_params_with(info(128 * 1024, 4 * 1024 * 1024, 0), 4096, 4096, 4096, 16, 4, 4);
+        assert_eq!(p.kc, 1024);
+        assert_eq!(p.mc, 128);
+        // A micropanel + B micropanel must fit the L1d it was derived from
+        assert!((16 * p.kc * 4) + (4 * p.kc * 4) <= 128 * 1024);
+
+        // Apple M5 E-core geometry: still fits, half the P-core kc
+        let e = kernel_params_with(info(64 * 1024, 1024 * 1024, 0), 4096, 4096, 4096, 16, 4, 4);
+        assert!((16 * e.kc * 4) + (4 * e.kc * 4) <= 64 * 1024);
+    }
+
+    /// the fix must not move x86, where the `.max(512)` floor absorbs it. this host cannot
+    /// run those paths, so pin them arithmetically.
+    #[test]
+    fn x86_blocking_is_unchanged() {
+        // fma / avx2 f32: N = 8, MR_DIV_N = 2 -> MR = 16, NR = 6
+        let fma = kernel_params_with(info(32 * 1024, 256 * 1024, 2 * 1024 * 1024), 4096, 4096, 4096, 16, 6, 4);
+        assert_eq!((fma.kc, fma.mc), (512, 96));
+
+        // avx512 f32: N = 16, MR_DIV_N = 4 -> MR = 64, NR = 6
+        let avx512 = kernel_params_with(info(32 * 1024, 1024 * 1024, 8 * 1024 * 1024), 4096, 4096, 4096, 64, 6, 4);
+        assert_eq!((avx512.kc, avx512.mc), (512, 384));
     }
 }
