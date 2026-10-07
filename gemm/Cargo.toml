@@ -62,6 +62,7 @@ rayon = [
   "gemm-c64/rayon",
   "gemm-f16?/rayon",
 ]
+spindle = ["rayon", "gemm-common/spindle"]
 wasm-simd128-enable = ["gemm-common/wasm-simd128-enable"]
 
 [dev-dependencies]
@@ -74,6 +75,10 @@ clap = { version = "4.5.4", features = ["derive"] }
 aligned-vec = "0.6.1"
 itertools = "0.14.0"
 regex = "1.10.4"
+
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", target_os = "watchos", target_os = "windows", target_os = "freebsd"))'.dev-dependencies]
+rayon = { workspace = true }
+spindle = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 getrandom = { version = "0.2", features = ["js"] }

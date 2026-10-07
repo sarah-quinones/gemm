@@ -38,9 +38,15 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Collect coverage data
+        id: coverage
         run: cargo llvm-cov nextest --lcov --output-path lcov.info --package gemm
 
+      - name: Test Spindle scheduling
+        timeout-minutes: 10
+        run: cargo nextest run --package gemm --features spindle -E 'test(tests::scheduling::)'
+
       - name: Upload coverage data to codecov
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
         uses: codecov/codecov-action@v3
         with:
           files: lcov.info

@@ -162,12 +162,49 @@ pub fn set_lhs_packing_threshold_multi_thread(value: usize) {
 
 #[cfg(feature = "rayon")]
 pub fn par_for_each(n_threads: usize, func: impl Fn(usize) + Send + Sync) {
-    fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
-        use rayon::prelude::*;
-        (0..n_threads).into_par_iter().for_each(func);
+    // Preserve the empty-range no-op: older Spindle versions reject zero jobs
+    // when called from a worker.
+    // TODO: Remove after requiring a published Spindle version whose
+    // for_each_raw handles zero jobs.
+    if n_threads == 0 {
+        return;
     }
 
-    inner(n_threads, &func)
+    // Use Spindle when available; otherwise fall back to Rayon.
+    macro_rules! dispatch {
+        ($cfg:meta, $spindle:block, $rayon:block) => {{
+            #[cfg($cfg)]
+            $spindle
+            #[cfg(not($cfg))]
+            $rayon
+        }};
+    }
+
+    dispatch!(
+        all(
+            feature = "spindle",
+            any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "watchos",
+                target_os = "windows",
+                target_os = "freebsd",
+            )
+        ),
+        {
+            spindle::for_each_raw(n_threads, func);
+        },
+        {
+            fn inner(n_threads: usize, func: &(dyn Fn(usize) + Send + Sync)) {
+                use rayon::prelude::*;
+                (0..n_threads).into_par_iter().for_each(func);
+            }
+
+            inner(n_threads, &func)
+        }
+    );
 }
 
 #[inline(always)]
