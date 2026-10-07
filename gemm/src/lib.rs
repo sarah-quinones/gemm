@@ -1,6 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
 
+//! Enable the optional `spindle` feature for parallel GEMM inside
+//! `spindle::with_lock`; otherwise GEMM uses Rayon directly.
+
 mod gemm;
 
 #[cfg(feature = "f16")]
@@ -23,6 +26,228 @@ mod tests {
     extern crate alloc;
     use alloc::{vec, vec::Vec};
     use num_traits::Float;
+
+    #[cfg(all(
+        feature = "rayon",
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "watchos",
+            target_os = "windows",
+            target_os = "freebsd",
+        )
+    ))]
+    mod scheduling {
+        #[cfg(feature = "spindle")]
+        use crate::Parallelism;
+        use gemm_common::gemm::par_for_each;
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+        /// Runs a test in a private Rayon pool with the requested worker count.
+        fn with_pool(n_threads: usize, test: impl FnOnce() + Send) {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n_threads)
+                .build()
+                .unwrap()
+                .install(test);
+        }
+
+        /// Verifies that a scheduling path executes every numbered job exactly once.
+        fn assert_jobs(n_jobs: usize, run: impl FnOnce(&(dyn Fn(usize) + Send + Sync))) {
+            let calls = (0..n_jobs).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>();
+            let job = |idx: usize| {
+                calls[idx].fetch_add(1, SeqCst);
+            };
+
+            run(&job);
+
+            for (idx, calls) in calls.iter().enumerate() {
+                assert_eq!(calls.load(SeqCst), 1, "job {idx} execution count");
+            }
+        }
+
+        /// Checks packing and compute scheduling against an exact period-16 fixture.
+        /// Positive integer products and sums stay below 2048, including the scaled
+        /// destination, so f16 and f64 need no tolerance or second GEMM invocation.
+        #[cfg(feature = "spindle")]
+        fn assert_fixed_gemm<T: num_traits::Float + 'static>(convert: fn(f64) -> T) {
+            const N: usize = 192;
+            const K: usize = 64;
+            for (m, row_major) in [(256, false), (95, true)] {
+                let (lhs_cs, lhs_rs, rhs_cs, rhs_rs) = if row_major {
+                    (1, K as isize, 1, N as isize)
+                } else {
+                    (m as isize, 1, K as isize, 1)
+                };
+                let lhs = (0..m * K)
+                    .map(|idx| {
+                        let i = idx / lhs_rs as usize % m;
+                        let k = idx / lhs_cs as usize % K;
+                        convert((1 + i % 4 + k % 4) as f64)
+                    })
+                    .collect::<Vec<_>>();
+                let rhs = (0..K * N)
+                    .map(|idx| {
+                        let k = idx / rhs_rs as usize % K;
+                        let j = idx / rhs_cs as usize % N;
+                        convert((1 + j % 4 + (k / 4) % 4) as f64)
+                    })
+                    .collect::<Vec<_>>();
+                let mut actual = (0..m * N)
+                    .map(|idx| convert((2 * (idx % 11)) as f64))
+                    .collect::<Vec<_>>();
+                unsafe {
+                    crate::gemm::gemm(
+                        m,
+                        N,
+                        K,
+                        actual.as_mut_ptr(),
+                        m as isize,
+                        1,
+                        true,
+                        lhs.as_ptr(),
+                        lhs_cs,
+                        lhs_rs,
+                        rhs.as_ptr(),
+                        rhs_cs,
+                        rhs_rs,
+                        convert(0.5),
+                        convert(1.0),
+                        false,
+                        false,
+                        false,
+                        Parallelism::Rayon(0),
+                    );
+                }
+                for (idx, actual) in actual.iter().enumerate() {
+                    // All 16 depth pairs occur K/16 times; alpha * initial_dst = idx % 11.
+                    let expected =
+                        (K / 16) * (10 + 4 * (idx % m % 4)) * (10 + 4 * (idx / m % 4)) + idx % 11;
+                    assert_eq!(actual.to_f64().unwrap(), expected as f64);
+                }
+            }
+        }
+
+        /// Runs one nested check on parent worker 1, not merely on job 1.
+        /// Every parent participant must reach the barrier before any job can finish.
+        #[cfg(feature = "spindle")]
+        fn assert_worker_call(n_threads: usize, check: impl Fn() + Sync) {
+            let ready = std::sync::Barrier::new(n_threads);
+            let worker_calls = AtomicUsize::new(0);
+            spindle::for_each_raw(n_threads, |_| {
+                ready.wait();
+                if spindle::current_thread_index() == Some(1) {
+                    worker_calls.fetch_add(1, SeqCst);
+                    check();
+                }
+            });
+            assert_eq!(worker_calls.load(SeqCst), 1, "nested check on worker 1");
+        }
+
+        /// Checks every pool/job size outside a scope and, when enabled, inside one.
+        #[test]
+        fn test_par_for_each_scheduling() {
+            for n_threads in [1, 2, 4] {
+                with_pool(n_threads, || {
+                    let check = |_in_scope: bool| {
+                        for n_jobs in [0, 1, 2, 7] {
+                            assert_jobs(n_jobs, |job| {
+                                par_for_each(n_jobs, |idx| {
+                                    #[cfg(feature = "spindle")]
+                                    if _in_scope && n_jobs > 1 {
+                                        assert!(spindle::current_thread_index().is_some());
+                                    }
+                                    job(idx);
+                                })
+                            });
+                        }
+                    };
+                    check(false);
+                    #[cfg(feature = "spindle")]
+                    spindle::with_lock(n_threads, || check(true));
+                });
+            }
+        }
+
+        /// Requires a helper in an automatically created child scope. Parent jobs
+        /// stay active until the first child callback, so the helper sees its request.
+        #[cfg(feature = "spindle")]
+        #[test]
+        fn test_spindle_nested_helper() {
+            with_pool(3, || {
+                spindle::with_lock(3, || {
+                    let ready = std::sync::Barrier::new(3);
+                    let workers = AtomicUsize::new(0);
+                    spindle::for_each_raw(3, |_| {
+                        ready.wait();
+                        if spindle::current_thread_index() == Some(1) {
+                            assert_jobs(2, |job| {
+                                par_for_each(2, |idx| {
+                                    job(idx);
+                                    let worker = spindle::current_thread_index()
+                                        .expect("child job outside Spindle scope");
+                                    assert!(worker < 2);
+                                    let bit = 1 << worker;
+                                    assert_eq!(workers.fetch_or(bit, SeqCst) & bit, 0);
+                                    let deadline = std::time::Instant::now()
+                                        + std::time::Duration::from_secs(10);
+                                    while workers.load(SeqCst) != 3 {
+                                        assert!(
+                                            std::time::Instant::now() < deadline,
+                                            "nested GEMM dispatch had no helper",
+                                        );
+                                        std::thread::yield_now();
+                                    }
+                                });
+                            });
+                        } else {
+                            // Fail if the child never reaches its first callback.
+                            let deadline =
+                                std::time::Instant::now() + std::time::Duration::from_secs(10);
+                            while workers.load(SeqCst) == 0 {
+                                assert!(
+                                    std::time::Instant::now() < deadline,
+                                    "nested GEMM dispatch never started",
+                                );
+                                std::thread::yield_now();
+                            }
+                        }
+                    });
+                    assert_eq!(workers.load(SeqCst), 3);
+                });
+            });
+        }
+
+        /// Verifies default parallelism when a Spindle scope is narrower
+        /// than its Rayon pool, including calls made by an active Spindle worker.
+        #[cfg(feature = "spindle")]
+        #[test]
+        fn test_spindle_narrow_lock() {
+            with_pool(8, || {
+                spindle::with_lock(2, || {
+                    let check = || {
+                        assert_eq!(rayon::current_num_threads(), 8);
+                        assert_eq!(spindle::max_num_threads(), 2);
+                        par_for_each(0, |_| panic!("zero jobs must not execute"));
+                        assert_jobs(8, |job| {
+                            par_for_each(8, |idx| {
+                                assert!(spindle::current_thread_index().is_some());
+                                assert!(spindle::current_num_threads() <= 2);
+                                job(idx);
+                            });
+                        });
+                        assert_fixed_gemm(|value| value);
+                        #[cfg(feature = "f16")]
+                        assert_fixed_gemm(crate::f16::from_f64);
+                    };
+                    check();
+                    assert_worker_call(2, check);
+                });
+            });
+        }
+    }
 
     #[test]
     fn test_gemm_f16() {

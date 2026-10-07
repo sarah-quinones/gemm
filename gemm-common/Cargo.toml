@@ -23,6 +23,9 @@ pulp = { version = "0.22.0", default-features = false }
 bytemuck = "1.14"
 libm = "0.2.11"
 
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", target_os = "watchos", target_os = "windows", target_os = "freebsd"))'.dependencies]
+spindle = { workspace = true, optional = true }
+
 [target.'cfg(target_vendor = "apple")'.dependencies]
 sysctl = { workspace = true, optional = true }
 
@@ -37,4 +40,5 @@ x86-v4 = ["pulp/x86-v4"]
 wasm-simd128-enable = []
 experimental-apple-amx = ["std"]
 rayon = ["dep:rayon", "std"]
+spindle = ["rayon", "dep:spindle"]
 f16 = ["half"]

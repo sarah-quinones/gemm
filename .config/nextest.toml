@@ -1,0 +1,4 @@
+# Bound scheduling regressions; numerical suites retain their existing limits.
+[[profile.default.overrides]]
+filter = 'package(=gemm) & test(tests::scheduling::)'
+slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s" }
