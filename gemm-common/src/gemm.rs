@@ -1012,10 +1012,10 @@ macro_rules! gemm_def {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
                 #[cfg(feature = "x86-v4")]
-                if $crate::feature_detected!("avx512f") {
+                if $crate::simd::V4::try_new().is_some() {
                     return avx512f::gemm_basic;
                 }
-                if $crate::feature_detected!("fma") {
+                if $crate::simd::V3::try_new().is_some() {
                     fma::gemm_basic
                 } else {
                     scalar::gemm_basic
@@ -1121,10 +1121,10 @@ macro_rules! gemm_cplx_def {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
                 #[cfg(feature = "x86-v4")]
-                if $crate::feature_detected!("avx512f") {
+                if $crate::simd::V4::try_new().is_some() {
                     return avx512f_cplx::gemm_basic_cplx;
                 }
-                if $crate::feature_detected!("fma") {
+                if $crate::simd::V3::try_new().is_some() {
                     return fma_cplx::gemm_basic_cplx;
                 }
             }
