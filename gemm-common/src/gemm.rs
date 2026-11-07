@@ -1011,11 +1011,15 @@ macro_rules! gemm_def {
         fn init_gemm_fn() -> GemmTy {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
+                // Pick a kernel by asking its SIMD type, not one CPU flag: the kernel
+                // `unwrap()`s `try_new()`, which needs every feature the type lists
+                // (e.g. `fma` alone is not enough; some CPUs and x86 emulators report
+                // FMA without AVX2).
                 #[cfg(feature = "x86-v4")]
-                if $crate::feature_detected!("avx512f") {
+                if $crate::simd::V4::try_new().is_some() {
                     return avx512f::gemm_basic;
                 }
-                if $crate::feature_detected!("fma") {
+                if $crate::simd::V3::try_new().is_some() {
                     fma::gemm_basic
                 } else {
                     scalar::gemm_basic
@@ -1120,11 +1124,12 @@ macro_rules! gemm_cplx_def {
         fn init_gemm_cplx_fn() -> GemmCplxTy {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             {
+                // See `init_gemm_fn`: ask the kernel's SIMD type, not one flag.
                 #[cfg(feature = "x86-v4")]
-                if $crate::feature_detected!("avx512f") {
+                if $crate::simd::V4::try_new().is_some() {
                     return avx512f_cplx::gemm_basic_cplx;
                 }
-                if $crate::feature_detected!("fma") {
+                if $crate::simd::V3::try_new().is_some() {
                     return fma_cplx::gemm_basic_cplx;
                 }
             }
