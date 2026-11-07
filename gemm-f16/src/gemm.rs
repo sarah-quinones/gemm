@@ -799,11 +799,13 @@ pub mod f16 {
     fn init_gemm_fn() -> GemmTy {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
+            // Pick a kernel by asking its SIMD type (see gemm-common's `init_gemm_fn`):
+            // the f16 `V3` also needs F16C.
             #[cfg(feature = "x86-v4")]
-            if gemm_common::feature_detected!("avx512f") {
+            if gemm_common::simd::V4::try_new().is_some() {
                 return avx512f::gemm_basic;
             }
-            if gemm_common::feature_detected!("fma") {
+            if gemm_common::simd::V3::try_new().is_some() {
                 fma::gemm_basic
             } else {
                 scalar::gemm_basic
